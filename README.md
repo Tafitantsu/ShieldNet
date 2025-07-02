@@ -1,254 +1,254 @@
-# Secure TCP Tunnel (Refactored)
+# Tunnel TCP Sécurisé (Refactorisé)
 
-This project provides a robust, production-grade TLS-encrypted TCP tunnel. It's a refactored and enhanced version of an initial simpler tunnel, designed for security, resilience, and manageability. The client listens locally for TCP connections and forwards traffic over a TLS-encrypted link to the server. The server then decrypts this traffic and forwards it to a predefined target TCP service.
+Ce projet fournit un tunnel TCP robuste et prêt pour la production, chiffré en TLS. Il s'agit d'une version refactorisée et améliorée d'un tunnel initial plus simple, conçue pour la sécurité, la résilience et la facilité de gestion. Le client écoute localement les connexions TCP et transfère le trafic via un lien TLS chiffré vers le serveur. Le serveur déchiffre ensuite ce trafic et le redirige vers un service TCP cible prédéfini.
 
-## Architecture Overview
+## Vue d'ensemble de l'architecture
 
-The system consists of two main components: `client.py` and `server.py`.
+Le système se compose de deux composants principaux : `client.py` et `server.py`.
 
 ```
 +-----------------+      TCP      +-------------+      TLS      +-------------+      TCP      +----------------+
-| Local           |<------------->| Tunnel      |<------------->| Tunnel      |<------------->| Target         |
-| Application     | Plaintext     | Client      |  Encrypted    | Server      | Plaintext     | Service        |
-| (e.g., browser, | (on          | (client.py) |  (m)TLS       | (server.py) | (on           | (e.g., web     |
-|  database tool) | localhost)    |             |  Tunnel       |             | server's host) |  server, DB)   |
+| Application     |<------------->| Tunnel      |<------------->| Tunnel      |<------------->| Service        |
+| locale          | en clair      | Client      |  Chiffré      | Serveur     | en clair      | Cible          |
+| (ex : navigateur| (localhost)   | (client.py) |  (m)TLS       | (server.py) | (hôte serveur)| (ex : web, BD) |
+|  ou outil BD)   |               |             |  Tunnel       |             |               |                |
 +-----------------+               +-------------+               +-------------+               +----------------+
                                    ^                                           ^
-                                   | listens on configured                     | listens on configured
-                                   | local port (e.g., 1080)                   | public port (e.g., 8443)
+                                   | écoute sur port local                     | écoute sur port public
+                                   | configuré (ex : 1080)                     | configuré (ex : 8443)
 ```
 
-## Core Features Implemented
+## Fonctionnalités principales
 
-*   **Security (TLS and Auth):**
-    *   Mutual TLS authentication (mTLS): Server verifies client cert against a CA; client verifies server cert.
-    *   TLS 1.2 or TLS 1.3 enforcement (configurable, defaults to TLS 1.2).
-    *   Strict CN/SAN hostname checking (client checks server CN/SAN; server can check client CN/SAN if configured).
-    *   TLS handshake timeout to prevent DoS.
-*   **Networking & Resilience:**
-    *   Bidirectional TCP data forwarding.
-    *   Timeouts on socket operations (connect, TLS handshake, data recv/send).
-    *   Automatic client reconnection: If the tunnel client fails to connect to the server for a specific local connection, it retries with exponential backoff.
-*   **Developer/DevOps Experience:**
-    *   Configuration via YAML files (`client_config.yaml`, `server_config.yaml`).
-    *   Structured logging to files with rotation and configurable log levels.
-    *   `--verbose`/`--debug` CLI flags to override configured log level.
-    *   Dockerfiles for client and server.
-    *   `docker-compose.yml` for easy multi-container local testing.
-    *   Unit tests for core logic (config loading, network utilities, client/server handlers).
-    *   A local shell script (`scripts/test_tunnel.sh`) for end-to-end testing using Docker Compose.
-*   **Monitoring:**
-    *   Server logs active connection counts.
-    *   Server logs per-session statistics (uptime, bytes sent/received) upon session completion.
+*   **Sécurité (TLS et Authentification) :**
+    *   Authentification mutuelle TLS (mTLS) : le serveur vérifie le certificat client via une CA ; le client vérifie le certificat serveur.
+    *   Forçage TLS 1.2 ou 1.3 (configurable, par défaut TLS 1.2).
+    *   Vérification stricte du CN/SAN (le client vérifie le CN/SAN du serveur ; le serveur peut vérifier le CN/SAN du client si configuré).
+    *   Timeout de la poignée de main TLS pour éviter les attaques DoS.
+*   **Réseau & Résilience :**
+    *   Transfert bidirectionnel des données TCP.
+    *   Timeouts sur les opérations socket (connexion, handshake TLS, réception/envoi de données).
+    *   Reconnexion automatique du client : si le client échoue à se connecter au serveur pour une connexion locale, il réessaie avec un backoff exponentiel.
+*   **Expérience Développeur/DevOps :**
+    *   Configuration via fichiers YAML (`client_config.yaml`, `server_config.yaml`).
+    *   Logs structurés dans des fichiers avec rotation et niveaux configurables.
+    *   Flags CLI `--verbose`/`--debug` pour surcharger le niveau de log.
+    *   Dockerfiles pour client et serveur.
+    *   `docker-compose.yml` pour des tests multi-conteneurs locaux faciles.
+    *   Tests unitaires pour la logique principale (chargement config, utilitaires réseau, gestionnaires client/serveur).
+    *   Script shell local (`scripts/test_tunnel.sh`) pour tests end-to-end via Docker Compose.
+*   **Supervision :**
+    *   Le serveur journalise le nombre de connexions actives.
+    *   Le serveur journalise les statistiques par session (durée, octets envoyés/reçus) à la fin de chaque session.
 
-## Project Structure
+## Structure du projet
 
 ```
 .
-├── certs/                   # (User-created) For TLS certificates
+├── certs/                   # (Créé par l'utilisateur) Certificats TLS
 │   ├── ca.crt
 │   ├── server.crt
 │   ├── server.key
 │   ├── client.crt
 │   └── client.key
-├── config/                  # Configuration files
-│   ├── client_config.yaml   # (User-created from example)
+├── config/                  # Fichiers de configuration
+│   ├── client_config.yaml   # (À créer à partir de l'exemple)
 │   ├── client_config.yaml.example
-│   ├── server_config.yaml   # (User-created from example)
+│   ├── server_config.yaml   # (À créer à partir de l'exemple)
 │   └── server_config.yaml.example
-├── docker/                  # Docker related files
+├── docker/                  # Fichiers Docker
 │   ├── client.Dockerfile
 │   ├── server.Dockerfile
 │   └── docker-compose.yml
-├── logs/                    # (Auto-created) Log files will appear here
+├── logs/                    # (Auto-créé) Fichiers de logs
 │   ├── client/
 │   └── server/
-├── scripts/                 # Helper and test scripts
+├── scripts/                 # Scripts d'aide et de test
 │   └── test_tunnel.sh
-├── src/                     # Source code
-│   ├── common/              # Shared utility modules
+├── src/                     # Code source
+│   ├── common/              # Modules utilitaires partagés
 │   │   ├── config_loader.py
 │   │   ├── logging_setup.py
 │   │   └── network_utils.py
-│   ├── client.py            # Client application
-│   └── server.py            # Server application
-├── tests/                   # Unit tests
+│   ├── client.py            # Application client
+│   └── server.py            # Application serveur
+├── tests/                   # Tests unitaires
 │   ├── __init__.py
 │   ├── test_client.py
 │   ├── test_server.py
 │   ├── test_config_loader.py
 │   └── test_network_utils.py
-├── AGENTS.md                # Instructions for AI agents
-├── README.md                # This file
-└── requirements.txt         # Python dependencies
+├── AGENTS.md                # Instructions pour agents IA
+├── README.md                # Ce fichier
+└── requirements.txt         # Dépendances Python
 ```
 
-## Getting Started
+## Démarrage rapide
 
-### 1. Prerequisites
+### 1. Prérequis
 *   Python 3.7+
-*   OpenSSL (for generating certificates)
-*   Docker and Docker Compose (for containerized execution and testing script)
-*   `PyYAML` (install via `pip install -r requirements.txt`)
+*   OpenSSL (pour générer les certificats)
+*   Docker et Docker Compose (pour l'exécution et les tests en conteneur)
+*   `PyYAML` (installer via `pip install -r requirements.txt`)
 
-### 2. Generating TLS Certificates (Self-Signed for Testing)
+### 2. Génération des certificats TLS (auto-signés pour tests)
 
-You'll need a Certificate Authority (CA), a server certificate signed by the CA, and a client certificate signed by the CA for mTLS.
+Vous aurez besoin d'une Autorité de Certification (CA), d'un certificat serveur signé par la CA, et d'un certificat client signé par la CA pour le mTLS.
 
-Create a `certs` directory in the project root: `mkdir certs && cd certs`
+Créez un dossier `certs` à la racine du projet : `mkdir certs && cd certs`
 
-**a. Create CA:**
+**a. Créer la CA :**
 ```bash
-# Generate CA private key
+# Générer la clé privée de la CA
 openssl genpkey -algorithm RSA -out ca.key -pkeyopt rsa_keygen_bits:2048
-# Generate CA certificate (self-signed)
+# Générer le certificat CA (auto-signé)
 openssl req -new -x509 -key ca.key -out ca.crt -days 365 -subj "/CN=MyTestCA"
 ```
 
-**b. Create Server Certificate:**
-(Replace `your.server.com` with the actual hostname or IP the client will use to connect to the server, or `tunnel-server` for Docker Compose).
+**b. Créer le certificat serveur :**
+(Remplacez `your.server.com` par le vrai nom d'hôte ou IP utilisé par le client, ou `tunnel-server` pour Docker Compose).
 ```bash
-SERVER_HOSTNAME="your.server.com" # Or "tunnel-server" for docker-compose
+SERVER_HOSTNAME="your.server.com" # Ou "tunnel-server" pour docker-compose
 openssl genpkey -algorithm RSA -out server.key -pkeyopt rsa_keygen_bits:2048
 openssl req -new -key server.key -out server.csr -subj "/CN=${SERVER_HOSTNAME}"
-# Sign server certificate with CA
+# Signer le certificat serveur avec la CA
 openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 360 -extfile <(printf "subjectAltName=DNS:${SERVER_HOSTNAME},DNS:localhost,IP:127.0.0.1")
 ```
-*Note: `localhost` and `127.0.0.1` are added to SANs for easier local testing if the server runs directly on the host.*
+*Note : `localhost` et `127.0.0.1` sont ajoutés aux SANs pour faciliter les tests locaux si le serveur tourne sur l'hôte.*
 
-**c. Create Client Certificate:**
-(Replace `your.client.id` with a suitable identifier if you plan to use `allowed_client_cns` on the server).
+**c. Créer le certificat client :**
+(Remplacez `your.client.id` par un identifiant adapté si vous utilisez `allowed_client_cns` côté serveur).
 ```bash
-CLIENT_ID="your.client.id" # e.g., "client1" or "testclient.example.com"
+CLIENT_ID="your.client.id" # ex : "client1" ou "testclient.example.com"
 openssl genpkey -algorithm RSA -out client.key -pkeyopt rsa_keygen_bits:2048
 openssl req -new -key client.key -out client.csr -subj "/CN=${CLIENT_ID}"
-# Sign client certificate with CA
+# Signer le certificat client avec la CA
 openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAserial ca.srl -out client.crt -days 360
 ```
-After these steps, your `certs/` directory should contain: `ca.crt`, `ca.key`, `ca.srl` (serial number file), `server.crt`, `server.key`, `server.csr`, `client.crt`, `client.key`, `client.csr`. The `.csr` and `ca.key` (after signing) are not strictly needed for running the application but are part of the generation process.
+Après ces étapes, le dossier `certs/` doit contenir : `ca.crt`, `ca.key`, `ca.srl`, `server.crt`, `server.key`, `server.csr`, `client.crt`, `client.key`, `client.csr`. Les fichiers `.csr` et `ca.key` (après signature) ne sont pas strictement nécessaires pour l'exécution mais font partie du processus de génération.
 
 ### 3. Configuration
 
-Copy the example configuration files and customize them:
+Copiez les fichiers de configuration exemple et personnalisez-les :
 ```bash
 mkdir -p config logs/client logs/server
 cp config/client_config.yaml.example config/client_config.yaml
 cp config/server_config.yaml.example config/server_config.yaml
 ```
 
-Edit `config/client_config.yaml` and `config/server_config.yaml`.
+Éditez `config/client_config.yaml` et `config/server_config.yaml`.
 
-**Key settings to adjust:**
+**Paramètres clés à ajuster :**
 
-*   **`client_config.yaml`**:
-    *   `remote_server.host`: Server's hostname/IP. For Docker Compose, use `tunnel-server`.
-    *   `remote_server.port`: Server's listening port (e.g., `8443`).
-    *   `remote_server.server_ca_cert`: Path to CA cert (e.g., `certs/ca.crt`).
-    *   `tls.client_cert`: Path to client's certificate (e.g., `certs/client.crt`).
-    *   `tls.client_key`: Path to client's private key (e.g., `certs/client.key`).
-    *   `logging.log_file`: e.g., `logs/client.log`.
-    *   Paths for Docker: When running via Docker Compose, cert paths should be relative to `/app` (e.g., `/app/certs/ca.crt`) and log paths e.g. `/app/logs/client.log` if you want them inside the mounted log volume. The examples provided in `docker-compose.yml` comments show this.
+*   **`client_config.yaml`** :
+    *   `remote_server.host` : Nom d'hôte/IP du serveur. Pour Docker Compose, utilisez `tunnel-server`.
+    *   `remote_server.port` : Port d'écoute du serveur (ex : `8443`).
+    *   `remote_server.server_ca_cert` : Chemin vers le certificat CA (ex : `certs/ca.crt`).
+    *   `tls.client_cert` : Chemin vers le certificat client (ex : `certs/client.crt`).
+    *   `tls.client_key` : Chemin vers la clé privée du client (ex : `certs/client.key`).
+    *   `logging.log_file` : ex : `logs/client.log`.
+    *   Chemins pour Docker : en conteneur, les chemins doivent être relatifs à `/app` (ex : `/app/certs/ca.crt`), logs dans `/app/logs/client.log` si montés dans le volume log. Voir les exemples/commentaires dans `docker-compose.yml`.
 
-*   **`server_config.yaml`**:
-    *   `server_listener.host`: Typically `0.0.0.0` to listen on all interfaces.
-    *   `server_listener.port`: Port for server to listen on (e.g., `8443`).
-    *   `target_service.host`: Hostname/IP of the final service. For Docker Compose, use `echo-server`.
-    *   `target_service.port`: Port of the final service (e.g., `8080` for the test echo-server).
-    *   `tls.server_cert`: Path to server's certificate (e.g., `certs/server.crt`).
-    *   `tls.server_key`: Path to server's private key (e.g., `certs/server.key`).
-    *   `tls.client_ca_cert`: Path to CA cert for mTLS client verification (e.g., `certs/ca.crt`). If blank, mTLS is disabled (server won't request client certs).
-    *   `tls.allowed_client_cns`: (Optional) List of Common Names (CNs) or Subject Alternative Names (SANs) from client certificates that are allowed if mTLS is active and this list is populated.
-    *   `logging.log_file`: e.g., `logs/server.log`.
-    *   Paths for Docker: Similar to client, adjust for `/app/certs/...` and `/app/logs/server.log`.
+*   **`server_config.yaml`** :
+    *   `server_listener.host` : Typiquement `0.0.0.0` pour écouter sur toutes les interfaces.
+    *   `server_listener.port` : Port d'écoute du serveur (ex : `8443`).
+    *   `target_service.host` : Nom d'hôte/IP du service cible. Pour Docker Compose, utilisez `echo-server`.
+    *   `target_service.port` : Port du service cible (ex : `8080` pour le serveur echo de test).
+    *   `tls.server_cert` : Chemin vers le certificat serveur (ex : `certs/server.crt`).
+    *   `tls.server_key` : Chemin vers la clé privée du serveur (ex : `certs/server.key`).
+    *   `tls.client_ca_cert` : Chemin vers le certificat CA pour la vérification mTLS (ex : `certs/ca.crt`). Si vide, mTLS désactivé (le serveur ne demandera pas de certificat client).
+    *   `tls.allowed_client_cns` : (Optionnel) Liste des CN/SAN autorisés pour les clients si mTLS actif et liste renseignée.
+    *   `logging.log_file` : ex : `logs/server.log`.
+    *   Chemins pour Docker : idem client, adaptez pour `/app/certs/...` et `/app/logs/server.log`.
 
-**Example Configuration for Docker Compose:**
+**Exemple de configuration pour Docker Compose :**
 
-Refer to the comments in `docker-compose.yml` for how to set `host` and certificate paths in your YAML configuration files when using Docker. Specifically:
-*   Client's `remote_server.host` should be `tunnel-server`.
-*   Server's `target_service.host` should be `echo-server`.
-*   All certificate paths in YAML files should be like `certs/ca.crt` (as they will be mounted to `/app/certs/ca.crt` inside container).
-*   Log file paths like `logs/client.log` (mounted to `/app/logs/client.log`).
+Voir les commentaires dans `docker-compose.yml` pour les valeurs à utiliser dans les fichiers YAML lors de l'utilisation de Docker :
+*   `remote_server.host` du client : `tunnel-server`
+*   `target_service.host` du serveur : `echo-server`
+*   Tous les chemins de certificats dans les YAML : `certs/ca.crt` (montés dans `/app/certs/ca.crt` dans le conteneur)
+*   Chemins de logs : `logs/client.log` (montés dans `/app/logs/client.log`)
 
-### 4. Running the Application
+### 4. Exécution de l'application
 
-**a. Using Docker Compose (Recommended for Testing):**
+**a. Avec Docker Compose (recommandé pour tests) :**
 
-This is the easiest way to test the full setup, including mTLS.
-1.  Ensure certificates are generated in `./certs/`.
-2.  Ensure `config/client_config.yaml` and `config/server_config.yaml` are created and correctly point to service names (e.g., `tunnel-server`, `echo-server`) and in-container cert/log paths (e.g., `certs/ca.crt`, `logs/client.log`).
-3.  Create log directories: `mkdir -p logs/client logs/server` (Docker might create these too, but good practice).
+C'est la méthode la plus simple pour tester l'ensemble, y compris le mTLS.
+1.  Générez les certificats dans `./certs/`.
+2.  Vérifiez que `config/client_config.yaml` et `config/server_config.yaml` sont créés et pointent vers les bons services (ex : `tunnel-server`, `echo-server`) et chemins cert/log en conteneur (ex : `certs/ca.crt`, `logs/client.log`).
+3.  Créez les dossiers de logs : `mkdir -p logs/client logs/server` (Docker peut aussi les créer, mais c'est conseillé).
 
 ```bash
-# Start services in detached mode
+# Démarrer les services en mode détaché
 docker-compose up --build -d
 
-# View logs
+# Voir les logs
 docker-compose logs -f tunnel-client
 docker-compose logs -f tunnel-server
 docker-compose logs -f echo-server
 
-# Test with the script
+# Tester avec le script
 bash scripts/test_tunnel.sh
 
-# Stop services
+# Arrêter les services
 docker-compose down -v
 ```
 
-**b. Manual Execution (Python directly):**
+**b. Exécution manuelle (Python directement) :**
 
-1.  Install dependencies: `pip install -r requirements.txt`
-2.  Ensure certificates are generated and configuration files are correctly set up for your environment (e.g., `remote_server.host` pointing to the actual server IP if not on localhost).
+1.  Installez les dépendances : `pip install -r requirements.txt`
+2.  Vérifiez que les certificats sont générés et que les fichiers de configuration sont adaptés à votre environnement (ex : `remote_server.host` pointant vers l'IP réelle du serveur si pas en localhost).
 
-    **Start the Server:**
+    **Démarrer le serveur :**
     ```bash
     python src/server.py --config config/server_config.yaml
-    # For verbose logging:
+    # Pour logs verbeux :
     # python src/server.py --config config/server_config.yaml --verbose
     ```
 
-    **Start the Client:**
-    (In a new terminal)
+    **Démarrer le client :**
+    (Dans un autre terminal)
     ```bash
     python src/client.py --config config/client_config.yaml
-    # For verbose logging:
+    # Pour logs verbeux :
     # python src/client.py --config config/client_config.yaml --verbose
     ```
-3.  Test by sending traffic to the client's listen port (e.g., `localhost:1080` if configured). For example, if the server forwards to a web server on `target-host:80`:
+3.  Testez en envoyant du trafic vers le port d'écoute du client (ex : `localhost:1080` si configuré). Par exemple, si le serveur redirige vers un serveur web sur `target-host:80` :
     ```bash
     curl http://localhost:1080
     ```
 
-### 5. Running Unit Tests
+### 5. Lancer les tests unitaires
 
-Ensure you are in the project root directory.
+Placez-vous à la racine du projet.
 ```bash
 python -m unittest discover -s tests -v
 ```
-This will discover and run all tests within the `tests` directory.
+Cela détectera et exécutera tous les tests du dossier `tests`.
 
-### 6. End-to-End Testing Script
+### 6. Script de test end-to-end
 
-The `scripts/test_tunnel.sh` script automates testing using Docker Compose:
-1.  It starts the `docker-compose` services (client, server, echo-server).
-2.  Waits for them to initialize.
-3.  Sends a test message via `netcat` through `localhost:1080` (client's port).
-4.  Checks if the echoed response matches the sent message.
-5.  Reports success or failure.
+Le script `scripts/test_tunnel.sh` automatise les tests via Docker Compose :
+1.  Démarre les services `docker-compose` (client, serveur, echo-server).
+2.  Attend leur initialisation.
+3.  Envoie un message de test via `netcat` à `localhost:1080` (port du client).
+4.  Vérifie si la réponse écho correspond au message envoyé.
+5.  Affiche succès ou échec.
 
-Make sure your `config/*.yaml` files are set up for the Docker Compose environment as described above (service names as hosts, `/app/certs` paths).
+Assurez-vous que vos fichiers `config/*.yaml` sont adaptés à l'environnement Docker Compose (noms de services comme hôtes, chemins `/app/certs`).
 ```bash
 bash scripts/test_tunnel.sh
 ```
-To automatically clean up Docker containers after the script runs, you can uncomment `trap cleanup EXIT` at the top of `test_tunnel.sh`.
+Pour nettoyer automatiquement les conteneurs Docker après le script, décommentez `trap cleanup EXIT` en haut de `test_tunnel.sh`.
 
-## Development
+## Développement
 
-*   **Code Style**: Follow PEP 8. Use a linter like Flake8.
-*   **Type Hinting**: Used throughout the codebase.
-*   **Logging**: Use the `logging` module. See `src/common/logging_setup.py`.
-*   **Testing**: Add unit tests for new functionality in the `tests/` directory. Maintain the end-to-end test script.
+*   **Style de code** : Suivre PEP 8. Utilisez un linter comme Flake8.
+*   **Type Hinting** : Utilisé dans tout le code.
+*   **Logging** : Utilisez le module `logging`. Voir `src/common/logging_setup.py`.
+*   **Tests** : Ajoutez des tests unitaires pour toute nouvelle fonctionnalité dans `tests/`. Maintenez le script de test end-to-end.
 
-## License
+## Licence
 
-MIT License (assuming from original project, can be confirmed/changed).
-This project was refactored and enhanced based on an initial version.
+Licence MIT (supposée depuis le projet original, à confirmer ou modifier).
+Ce projet a été refactorisé et amélioré à partir d'une version initiale.
