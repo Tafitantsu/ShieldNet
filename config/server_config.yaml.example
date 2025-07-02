@@ -1,0 +1,65 @@
+# Example Configuration for ShieldNet Server
+
+logging:
+  # Path to the log file. Can be absolute or relative to this config file's directory.
+  log_file: "server.log"
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_level: "INFO"
+  # Max size of the log file before rotation (in bytes)
+  log_rotation_bytes: 10485760 # 10MB
+  # Number of backup log files to keep
+  log_backup_count: 5
+
+server_listener:
+  # Host interface for the server to listen on for incoming client connections.
+  # "0.0.0.0" means listen on all available network interfaces.
+  host: "0.0.0.0"
+  # Port for the server to listen on for incoming TLS connections from ShieldNet clients.
+  port: 8443
+
+target_service:
+  # Hostname or IP address of the backend service to which decrypted traffic will be forwarded.
+  host: "127.0.0.1" # Example: "localhost", "service.internal.example.com"
+  # Port of the backend service.
+  port: 80 # Example: 80 for HTTP, 5432 for PostgreSQL
+
+tls:
+  # Path to the server's TLS certificate file (PEM format).
+  # Can be absolute or relative to this config file's directory.
+  server_cert: "certs/server.crt" # Example: "certs/server.crt"
+  # Path to the server's TLS private key file (PEM format).
+  # Can be absolute or relative to this config file's directory.
+  server_key: "certs/server.key"   # Example: "certs/server.key"
+
+  # --- Mutual TLS (mTLS) settings ---
+  # Path to the CA certificate file used to verify client certificates.
+  # If provided, the server will request and verify client certificates (mTLS).
+  # If omitted or empty, client certificates will not be requested or verified (standard TLS).
+  # Can be absolute or relative to this config file's directory.
+  client_ca_cert: "certs/ca.crt" # Example: "certs/ca.crt" for mTLS
+
+  # Optional: A list of allowed Common Names (CNs) or Subject Alternative Names (SANs)
+  # from client certificates. If mTLS is enabled (client_ca_cert is set) and this list
+  # is provided, the server will only allow clients whose certificate CN/SAN matches one
+  # of these values. If this list is empty or omitted, any client certificate signed by
+  # the client_ca_cert will be accepted (subject to standard certificate validation).
+  # allowed_client_cns:
+  #   - "client1.example.com"
+  #   - "authorized_client_san"
+
+  # Minimum TLS version to accept from clients. Options: "TLSv1.2", "TLSv1.3".
+  # It's recommended to use "TLSv1.2" or "TLSv1.3".
+  min_version: "TLSv1.2"
+
+timeouts:
+  # Timeout for the TLS handshake with an incoming client connection (seconds).
+  tls_handshake: 15
+  # Timeout for individual socket read/write operations during data forwarding (seconds).
+  # Set to 0 or a very high value for no timeout (not recommended for all scenarios).
+  socket_data: 60
+
+# Example of how a more complex, nested structure might be accessed:
+# advanced_options:
+#   max_concurrent_clients: 100
+#   connection_rate_limit:
+#     per_ip_per_minute: 60

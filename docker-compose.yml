@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  echo-server:
+    image: alpine/socat # Using socat for a simple echo server
+    command: TCP-LISTEN:8080,fork,reuseaddr EXEC:'/bin/cat'
+    ports:
+      # Expose on host only for testing if needed, not strictly necessary for internal communication
+      # - "8080:8080"
+    networks:
+      - tunnel_net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  tunnel-server:
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+    ports:
+      - "8443:8443" # Expose server's listening port to the host
+    volumes:
+      - ./config:/app/config:ro # Mount local config directory (read-only)
+      - ./certs:/app/certs:ro   # Mount local certs directory (read-only)
+      - ./logs/server:/app/logs # Mount a directory for server logs (read-write)
+    depends_on:
+      - echo-server # Optional: ensure echo-server starts first, though server doesn't directly depend on it at startup
+    networks:
+      - tunnel_net
+    environment:
+      # For Python's unbuffered output, useful for seeing logs immediately
+      PYTHONUNBUFFERED: 1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  tunnel-client:
+    build:
+      context: .
+      dockerfile: docker/client.Dockerfile
+    ports:
+      - "1080:1080" # Expose client's local listening port to the host
+    volumes:
+      - ./config:/app/config:ro
+      - ./certs:/app/certs:ro
+      - ./logs/client:/app/logs
+    depends_on:
+      - tunnel-server # Client needs the server to be available
+    networks:
+      - tunnel_net
+    environment:
+      PYTHONUNBUFFERED: 1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  tunnel_net:
+    driver: bridge
+
+# Before running `docker-compose up`:
+# 1. Ensure you have a `certs/` directory with:
+#    ca.crt, server.crt, server.key, client.crt, client.key
+# 2. Ensure you have a `config/` directory with:
+#    client_config.yaml (pointing to /app/certs/... for cert paths & tunnel-server:8443 for remote)
+#    server_config.yaml (pointing to /app/certs/... for cert paths & echo-server:8080 for target)
+# 3. Create `logs/client` and `logs/server` directories or ensure Docker can create them.
+#
+# Example server_config.yaml target_service section for Docker Compose:
+# target_service:
+#   host: "echo-server"  # Docker DNS will resolve this
+#   port: 8080
+#
+# Example client_config.yaml remote_server section for Docker Compose:
+# remote_server:
+#   host: "tunnel-server" # Docker DNS will resolve this
+#   port: 8443
+#   server_ca_cert: "certs/ca.crt" # Path inside container
+# tls:
+#   client_cert: "certs/client.crt" # Path inside container
+#   client_key: "certs/client.key"   # Path inside container
+# logging:
+#   log_file: "logs/client.log" # Path inside container
+#
+# And similar for server_config.yaml logging:
+# logging:
+#  log_file: "logs/server.log" # Path inside container

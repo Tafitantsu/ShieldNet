@@ -1,4 +1,1 @@
-# No external dependencies required for the core functionality.
-# If you were to add features like 'cryptography' for advanced key handling
-# or 'asyncio' specific libraries, they would go here.
-# For now, this tool uses only Python's standard library.
+PyYAML>=5.0
