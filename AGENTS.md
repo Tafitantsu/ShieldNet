@@ -1,62 +1,62 @@
-# Agent Instructions for Secure TCP Tunnel Project
+# Instructions pour les agents – Projet de Tunnel TCP Sécurisé
 
-Welcome, agent! This file contains guidelines and conventions to follow while working on this project.
+Bienvenue, agent ! Ce fichier contient les directives et conventions à suivre lors du travail sur ce projet.
 
-## 1. Coding Style & Conventions
+## 1. Style de code & conventions
 
-*   **Python:** Follow PEP 8 guidelines. Use a linter like Flake8 or Black if possible.
-*   **Type Hinting:** Use type hints for all function signatures and critical variables.
-*   **Logging:**
-    *   Use the standard `logging` module.
-    *   Log messages should be clear and informative.
-    *   Use appropriate log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-    *   Avoid print statements for logging; use the logging framework.
-*   **Error Handling:**
-    *   Handle exceptions gracefully.
-    *   Provide context in error messages.
-    *   Avoid catching generic `Exception` where possible; catch specific exceptions.
-*   **Modularity:**
-    *   Strive for small, focused functions and classes.
-    *   Shared utilities should go into the `src/common/` directory.
-*   **Configuration:**
-    *   All configurable parameters should be managed through the YAML configuration files. Avoid hardcoding values that might need to change.
+*   **Python :** Suivez les recommandations PEP 8. Utilisez un linter comme Flake8 ou Black si possible.
+*   **Annotations de type :** Utilisez les annotations de type pour toutes les signatures de fonctions et les variables critiques.
+*   **Journalisation :**
+    *   Utilisez le module standard `logging`.
+    *   Les messages de log doivent être clairs et informatifs.
+    *   Utilisez les niveaux de log appropriés (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+    *   Évitez les instructions print pour la journalisation ; utilisez le framework logging.
+*   **Gestion des erreurs :**
+    *   Gérez les exceptions de manière élégante.
+    *   Fournissez du contexte dans les messages d’erreur.
+    *   Évitez de capturer l’exception générique `Exception` ; ciblez des exceptions spécifiques.
+*   **Modularité :**
+    *   Privilégiez des fonctions et classes petites et ciblées.
+    *   Les utilitaires partagés doivent aller dans le dossier `src/common/`.
+*   **Configuration :**
+    *   Tous les paramètres configurables doivent être gérés via des fichiers de configuration YAML. Évitez de coder en dur des valeurs susceptibles de changer.
 
-## 2. TLS/SSL Implementation
+## 2. Implémentation TLS/SSL
 
-*   **Security First:** Prioritize secure defaults.
-*   **Explicit TLS Versions:** When configuring `SSLContext`, explicitly disable insecure protocols (SSLv3, TLSv1.0, TLSv1.1) and set the minimum version to TLS 1.2.
-*   **Certificate Validation:**
-    *   Always validate peer certificates in mTLS.
-    *   Perform hostname/CN/SAN validation rigorously.
-*   **Error Messages:** TLS-related errors should be logged with sufficient detail to help diagnose issues (e.g., certificate verification errors, handshake failures).
+*   **Sécurité avant tout :** Privilégiez des paramètres sécurisés par défaut.
+*   **Versions TLS explicites :** Lors de la configuration de `SSLContext`, désactivez explicitement les protocoles non sécurisés (SSLv3, TLSv1.0, TLSv1.1) et définissez la version minimale sur TLS 1.2.
+*   **Validation des certificats :**
+    *   Validez toujours les certificats pairs en mTLS.
+    *   Effectuez une validation rigoureuse du nom d’hôte/CN/SAN.
+*   **Messages d’erreur :** Les erreurs liées à TLS doivent être journalisées avec suffisamment de détails pour faciliter le diagnostic (ex : erreurs de vérification de certificat, échecs de handshake).
 
-## 3. Testing
+## 3. Tests
 
-*   **Unit Tests:** Write unit tests for new functionality, especially for logic in `src/common/` and core connection handling.
-    *   Use the `unittest` or `pytest` framework.
-    *   Employ mocks (`unittest.mock`) extensively to isolate units of code, especially for network operations and SSL/TLS interactions.
-*   **Integration Testing:** The `scripts/test_tunnel.sh` (or similar) should be maintained to ensure end-to-end functionality.
+*   **Tests unitaires :** Écrivez des tests unitaires pour toute nouvelle fonctionnalité, en particulier pour la logique dans `src/common/` et la gestion des connexions principales.
+    *   Utilisez les frameworks `unittest` ou `pytest`.
+    *   Utilisez largement les mocks (`unittest.mock`) pour isoler les unités de code, notamment pour les opérations réseau et les interactions SSL/TLS.
+*   **Tests d’intégration :** Le script `scripts/test_tunnel.sh` (ou équivalent) doit être maintenu pour garantir le bon fonctionnement de bout en bout.
 
 ## 4. Docker
 
-*   Dockerfiles should be kept minimal and efficient.
-*   Use multi-stage builds if it significantly reduces image size.
-*   Ensure `docker-compose.yml` is up-to-date for easy local testing.
+*   Les Dockerfiles doivent rester minimalistes et efficaces.
+*   Utilisez les builds multi-étapes si cela réduit significativement la taille de l’image.
+*   Assurez-vous que `docker-compose.yml` est à jour pour faciliter les tests locaux.
 
-## 5. Commits and Pull Requests (If Applicable)
+## 5. Commits et Pull Requests (si applicable)
 
-*   Follow conventional commit message formats if the project adopts them.
-*   Ensure code is formatted and linted before committing.
-*   Ensure all tests pass.
+*   Suivez les formats de messages de commit conventionnels si le projet les adopte.
+*   Vérifiez que le code est formaté et linté avant de committer.
+*   Vérifiez que tous les tests passent.
 
-## 6. Plan Adherence
+## 6. Respect du plan
 
-*   Stick to the established plan. If deviations are necessary, update the plan using `set_plan` and inform the user.
-*   Mark plan steps as complete using `plan_step_complete()`.
+*   Suivez le plan établi. Si des écarts sont nécessaires, mettez à jour le plan via `set_plan` et informez l’utilisateur.
+*   Marquez les étapes du plan comme complètes avec `plan_step_complete()`.
 
-## 7. Dependencies
+## 7. Dépendances
 
-*   Add new dependencies to `requirements.txt`.
-*   Prefer well-maintained and reputable libraries.
+*   Ajoutez les nouvelles dépendances dans `requirements.txt`.
+*   Privilégiez les bibliothèques bien maintenues et réputées.
 
-By following these guidelines, we can ensure the project remains maintainable, secure, and robust. Thank you!
+En suivant ces directives, nous assurons la maintenabilité, la sécurité et la robustesse du projet. Merci !
