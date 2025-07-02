@@ -52,104 +52,104 @@ def handle_local_connection(local_conn_socket, local_addr, app_config):
             plain_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
             # Setup SSL context for client-side TLS
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.options |= ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1 # Disable older protocols
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.options |= ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1 # Disable older protocols
 
-        # Set minimum TLS version
-        if min_tls_version_str.upper() == "TLSV1.3":
-            context.minimum_version = ssl.TLSVersion.TLSv1_3
-            logging.debug("TLS minimum version set to TLSv1.3")
-        elif min_tls_version_str.upper() == "TLSV1.2":
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
-            logging.debug("TLS minimum version set to TLSv1.2")
-        else: # Default or if misconfigured, should have been caught by validator but good to be defensive
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
-            logging.warning(f"Unsupported TLS version '{min_tls_version_str}' in config, defaulting to TLSv1.2.")
+            # Set minimum TLS version
+            if min_tls_version_str.upper() == "TLSV1.3":
+                context.minimum_version = ssl.TLSVersion.TLSv1_3
+                logging.debug("TLS minimum version set to TLSv1.3")
+            elif min_tls_version_str.upper() == "TLSV1.2":
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
+                logging.debug("TLS minimum version set to TLSv1.2")
+            else: # Default or if misconfigured, should have been caught by validator but good to be defensive
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
+                logging.warning(f"Unsupported TLS version '{min_tls_version_str}' in config, defaulting to TLSv1.2.")
 
-        # Consider adding context.set_ciphers('ECDHE+AESGCM:CHACHA20') for specific strong ciphers if needed
+            # Consider adding context.set_ciphers('ECDHE+AESGCM:CHACHA20') for specific strong ciphers if needed
 
-        context.check_hostname = True # Verifies server hostname against its certificate
-        context.verify_mode = ssl.CERT_REQUIRED # Requires server to provide a certificate
+            context.check_hostname = True # Verifies server hostname against its certificate
+            context.verify_mode = ssl.CERT_REQUIRED # Requires server to provide a certificate
 
-        if server_ca_cert:
-            try:
-                context.load_verify_locations(cafile=server_ca_cert)
-                logging.info(f"Loaded CA certificate {server_ca_cert} for server verification.")
-            except FileNotFoundError:
-                logging.error(f"CA certificate file {server_ca_cert} not found. Cannot verify server.")
-                return
-            except ssl.SSLError as e:
-                logging.error(f"Error loading CA certificate {server_ca_cert}: {e}. Cannot verify server.")
-                return
-        else:
-            logging.warning("No server_ca_cert provided in config. TLS connection will use system default CAs for server verification. This may fail for self-signed server certificates.")
+            if server_ca_cert:
+                try:
+                    context.load_verify_locations(cafile=server_ca_cert)
+                    logging.info(f"Loaded CA certificate {server_ca_cert} for server verification.")
+                except FileNotFoundError:
+                    logging.error(f"CA certificate file {server_ca_cert} not found. Cannot verify server.")
+                    return
+                except ssl.SSLError as e:
+                    logging.error(f"Error loading CA certificate {server_ca_cert}: {e}. Cannot verify server.")
+                    return
+            else:
+                logging.warning("No server_ca_cert provided in config. TLS connection will use system default CAs for server verification. This may fail for self-signed server certificates.")
 
-        if client_cert_path and client_key_path:
-            try:
-                context.load_cert_chain(certfile=client_cert_path, keyfile=client_key_path)
-                logging.info(f"Loaded client certificate {client_cert_path} and key for mTLS.")
-            except FileNotFoundError:
-                logging.error(f"Client certificate or key file not found (Cert: {client_cert_path}, Key: {client_key_path}). Cannot proceed with mTLS.")
-                return
-            except ssl.SSLError as e:
-                logging.error(f"Error loading client certificate/key: {e}.")
-                return
-        elif client_cert_path or client_key_path: # Only one is provided
-             logging.warning("Client certificate or key path is missing. Both are required for mTLS. Proceeding without client certificate.")
+            if client_cert_path and client_key_path:
+                try:
+                    context.load_cert_chain(certfile=client_cert_path, keyfile=client_key_path)
+                    logging.info(f"Loaded client certificate {client_cert_path} and key for mTLS.")
+                except FileNotFoundError:
+                    logging.error(f"Client certificate or key file not found (Cert: {client_cert_path}, Key: {client_key_path}). Cannot proceed with mTLS.")
+                    return
+                except ssl.SSLError as e:
+                    logging.error(f"Error loading client certificate/key: {e}.")
+                    return
+            elif client_cert_path or client_key_path: # Only one is provided
+                logging.warning("Client certificate or key path is missing. Both are required for mTLS. Proceeding without client certificate.")
 
 
-        # server_hostname for SNI and cert validation should be remote_host
-        # unless expected_server_cn is specified and different.
-        hostname_to_verify = remote_host # Default to remote_host
-        # if expected_server_cn:
-        #     hostname_to_verify = expected_server_cn
-        #     logging.info(f"Overriding server_hostname for TLS to: {hostname_to_verify}")
+            # server_hostname for SNI and cert validation should be remote_host
+            # unless expected_server_cn is specified and different.
+            hostname_to_verify = remote_host # Default to remote_host
+            # if expected_server_cn:
+            #     hostname_to_verify = expected_server_cn
+            #     logging.info(f"Overriding server_hostname for TLS to: {hostname_to_verify}")
 
-        # Apply connect timeout
-        plain_server_socket.settimeout(connect_timeout)
-        plain_server_socket.connect((remote_host, remote_port))
-        logging.info(f"TCP connection established to {remote_host}:{remote_port}.")
+            # Apply connect timeout
+            plain_server_socket.settimeout(connect_timeout)
+            plain_server_socket.connect((remote_host, remote_port))
+            logging.info(f"TCP connection established to {remote_host}:{remote_port}.")
 
-        # Apply TLS handshake timeout before wrap_socket
-        if tls_handshake_timeout and tls_handshake_timeout > 0:
-            plain_server_socket.settimeout(tls_handshake_timeout)
-            logging.debug(f"Set TLS handshake timeout to {tls_handshake_timeout}s for connection to {remote_host}:{remote_port}")
-        else: # Disable timeout if 0 or None, or invalid
-            plain_server_socket.settimeout(None)
-            logging.debug(f"TLS handshake timeout disabled for connection to {remote_host}:{remote_port}")
+            # Apply TLS handshake timeout before wrap_socket
+            if tls_handshake_timeout and tls_handshake_timeout > 0:
+                plain_server_socket.settimeout(tls_handshake_timeout)
+                logging.debug(f"Set TLS handshake timeout to {tls_handshake_timeout}s for connection to {remote_host}:{remote_port}")
+            else: # Disable timeout if 0 or None, or invalid
+                plain_server_socket.settimeout(None)
+                logging.debug(f"TLS handshake timeout disabled for connection to {remote_host}:{remote_port}")
 
-        tls_server_socket = context.wrap_socket(plain_server_socket, server_hostname=hostname_to_verify)
+            tls_server_socket = context.wrap_socket(plain_server_socket, server_hostname=hostname_to_verify)
 
-        # After successful handshake, set the data timeout for both sockets
-        if socket_data_timeout and socket_data_timeout > 0:
-            local_conn_socket.settimeout(socket_data_timeout)
-            tls_server_socket.settimeout(socket_data_timeout)
-            logging.debug(f"Set socket data timeout to {socket_data_timeout}s for {local_addr} and its remote connection.")
-        else: # Disable timeout if 0, None, or invalid
-            local_conn_socket.settimeout(None)
-            tls_server_socket.settimeout(None)
-            logging.debug(f"Socket data timeout disabled for {local_addr} and its remote connection.")
+            # After successful handshake, set the data timeout for both sockets
+            if socket_data_timeout and socket_data_timeout > 0:
+                local_conn_socket.settimeout(socket_data_timeout)
+                tls_server_socket.settimeout(socket_data_timeout)
+                logging.debug(f"Set socket data timeout to {socket_data_timeout}s for {local_addr} and its remote connection.")
+            else: # Disable timeout if 0, None, or invalid
+                local_conn_socket.settimeout(None)
+                tls_server_socket.settimeout(None)
+                logging.debug(f"Socket data timeout disabled for {local_addr} and its remote connection.")
 
-        logging.info(f"Successfully connected to remote server {remote_host}:{remote_port} via TLS. Cipher: {tls_server_socket.cipher()}")
-        logging.debug(f"Server certificate: {tls_server_socket.getpeercert()}")
+            logging.info(f"Successfully connected to remote server {remote_host}:{remote_port} via TLS. Cipher: {tls_server_socket.cipher()}")
+            logging.debug(f"Server certificate: {tls_server_socket.getpeercert()}")
 
-        # Prepare a shared shutdown event for the two forwarding threads
-        # This allows one thread to signal the other if it encounters a critical error or normal EOF
-        shutdown_event = threading.Event()
+            # Prepare a shared shutdown event for the two forwarding threads
+            # This allows one thread to signal the other if it encounters a critical error or normal EOF
+            shutdown_event = threading.Event()
 
-        thread_to_remote = threading.Thread(
-            target=forward_data,
-            args=(local_conn_socket, tls_server_socket, f"local {local_addr} -> remote {remote_host}:{remote_port}", shutdown_event),
-            daemon=True, name=f"Fwd-ToRemote-{local_addr}"
-        )
-        thread_to_local = threading.Thread(
-            target=forward_data,
-            args=(tls_server_socket, local_conn_socket, f"remote {remote_host}:{remote_port} -> local {local_addr}", shutdown_event),
-            daemon=True, name=f"Fwd-ToLocal-{local_addr}"
-        )
+            thread_to_remote = threading.Thread(
+                target=forward_data,
+                args=(local_conn_socket, tls_server_socket, f"local {local_addr} -> remote {remote_host}:{remote_port}", shutdown_event),
+                daemon=True, name=f"Fwd-ToRemote-{local_addr}"
+            )
+            thread_to_local = threading.Thread(
+                target=forward_data,
+                args=(tls_server_socket, local_conn_socket, f"remote {remote_host}:{remote_port} -> local {local_addr}", shutdown_event),
+                daemon=True, name=f"Fwd-ToLocal-{local_addr}"
+            )
 
-        thread_to_remote.start()
-        thread_to_local.start()
+            thread_to_remote.start()
+            thread_to_local.start()
 
             # If connection successful, break from retry loop and proceed
             logging.info(f"[{local_addr}] Successfully established connection to {remote_host}:{remote_port} on attempt {attempt + 1}.")

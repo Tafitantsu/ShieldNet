@@ -21,22 +21,22 @@ target_service:
   # Hostname or IP address of the backend service to which decrypted traffic will be forwarded.
   host: "127.0.0.1" # Example: "localhost", "service.internal.example.com"
   # Port of the backend service.
-  port: 80 # Example: 80 for HTTP, 5432 for PostgreSQL
+  port: 9090 # Example: 80 for HTTP, 5432 for PostgreSQL
 
 tls:
   # Path to the server's TLS certificate file (PEM format).
   # Can be absolute or relative to this config file's directory.
-  server_cert: "certs/server.crt" # Example: "certs/server.crt"
+  server_cert: "../certs/server.crt" # Example: "certs/server.crt"
   # Path to the server's TLS private key file (PEM format).
   # Can be absolute or relative to this config file's directory.
-  server_key: "certs/server.key"   # Example: "certs/server.key"
+  server_key: "../certs/server.key"   # Example: "certs/server.key"
 
   # --- Mutual TLS (mTLS) settings ---
   # Path to the CA certificate file used to verify client certificates.
   # If provided, the server will request and verify client certificates (mTLS).
   # If omitted or empty, client certificates will not be requested or verified (standard TLS).
   # Can be absolute or relative to this config file's directory.
-  client_ca_cert: "certs/ca.crt" # Example: "certs/ca.crt" for mTLS
+  client_ca_cert: "../certs/ca.crt" # Example: "certs/ca.crt" for mTLS
 
   # Optional: A list of allowed Common Names (CNs) or Subject Alternative Names (SANs)
   # from client certificates. If mTLS is enabled (client_ca_cert is set) and this list

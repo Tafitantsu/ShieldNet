@@ -24,16 +24,16 @@ remote_server:
   # Path to the CA certificate file used to verify the ShieldNet server's certificate.
   # Required if the server uses a certificate signed by a custom CA (e.g., self-signed).
   # Can be absolute or relative to this config file's directory.
-  server_ca_cert: "certs/ca.crt" # Example: "certs/ca.crt" or "/etc/shieldnet/certs/ca.crt"
+  server_ca_cert: "../certs/ca.crt" # Example: "certs/ca.crt" or "/etc/shieldnet/certs/ca.crt"
 
 tls:
   # Client certificate for mTLS authentication.
   # Required if the server is configured for mTLS and needs to verify the client.
   # Can be absolute or relative to this config file's directory.
-  client_cert: "certs/client.crt" # Example: "certs/client.crt"
+  client_cert: "../certs/client.crt" # Example: "certs/client.crt"
   # Client private key for mTLS authentication.
   # Can be absolute or relative to this config file's directory.
-  client_key: "certs/client.key"   # Example: "certs/client.key"
+  client_key: "../certs/client.key"   # Example: "certs/client.key"
 
   # Minimum TLS version to use. Options: "TLSv1.2", "TLSv1.3".
   # It's recommended to use "TLSv1.2" or "TLSv1.3".
