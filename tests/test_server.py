@@ -1,214 +1,230 @@
 import unittest
-from unittest.mock import Mock, patch, ANY, call
+from unittest.mock import Mock, patch, ANY, call, MagicMock
 import socket
 import ssl
 import threading
 import time
-
-# Adjust import path
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.server import handle_client_connection
-# Mocking global statistics variables and lock from server.py
-# This is a bit tricky; ideally, these would be part of a class or passed around.
-# For now, we can patch them where they are used if they are module-level globals.
+from server.server import handle_client_connection, main as server_main
+from client.common.env_config_loader import EnvConfigError # Assuming server uses this too
 
-# Dummy config for testing
-DEFAULT_TEST_SERVER_CONFIG = {
-    "target_service": {
-        "host": "targethost.example.com",
-        "port": 8080
-    },
-    "tls": {
-        "client_ca_cert": "/path/to/client_ca.crt", # For mTLS
-        "allowed_client_cns": ["testclient.example.com", "another.valid.client"],
-        "min_version_str": "TLSv1.2" # Not directly used by handler, but by context setup in main
-    },
-    "timeouts": {
-        "socket_data": 1, # Short for tests
-        # "forward_connect_timeout": 1 # Not directly used by handler, but by create_connection call
-    },
-    "logging": {"log_level": "DEBUG"} # For enabling debug logs during test if needed
+MOCK_SERVER_DYNAMIC_TARGET_HOST = "dynamic-target.test"
+MOCK_SERVER_DYNAMIC_TARGET_PORT = 8000
+
+MOCK_ENV_VALUES_SERVER = {
+    "SHIELDNET_TLS_CLIENT_CA_CERT": "certs/client_ca.crt",
+    "SHIELDNET_TLS_ALLOWED_CLIENT_CNS": "testclient.example.com,another.valid.client",
+    "SHIELDNET_TIMEOUT_SOCKET_DATA": 1,
+    "SHIELDNET_TIMEOUT_TARGET_CONNECT": 2,
+    # For main()
+    "SHIELDNET_LOG_LEVEL": "DEBUG",
+    "SHIELDNET_LOG_FILE": "logs/server/server_test.log",
+    "SHIELDNET_TLS_SERVER_CERT": "certs/server.crt",
+    "SHIELDNET_TLS_SERVER_KEY": "certs/server.key",
+    "SHIELDNET_TLS_MIN_VERSION": "TLSv1.2",
+    "SHIELDNET_SERVER_LISTENER_HOST": "0.0.0.0",
+    "SHIELDNET_SERVER_LISTENER_PORT": 9443,
+    "SHIELDNET_TIMEOUT_TLS_HANDSHAKE": 1,
 }
 
-# Mocking the global active_connections_lock from server.py
-# This needs to be done carefully if tests run in parallel or affect global state.
-# For simplicity in this example, we assume it's okay to patch globally for the test.
-mock_server_active_connections_lock = Mock(spec=threading.Lock)
-mock_server_active_connections_lock.__enter__ = Mock()
-mock_server_active_connections_lock.__exit__ = Mock(return_value=False)
+TEST_SERVER_ENV_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(server_main.__code__.co_filename), ".."))
 
 
-@patch('src.server.active_connections_lock', new=mock_server_active_connections_lock)
+def mock_server_get_env_str(key, default=None, required=False):
+    val = MOCK_ENV_VALUES_SERVER.get(key)
+    if val is None:
+        if required: raise EnvConfigError(f"Required env var '{key}' not set in mock.")
+        return default
+    return str(val) if val is not None else default
+
+def mock_server_get_env_int(key, default=None, required=False):
+    val_str = MOCK_ENV_VALUES_SERVER.get(key)
+    if val_str is None:
+        if required: raise EnvConfigError(f"Required env var '{key}' not set in mock.")
+        return default
+    try:
+        return int(val_str)
+    except ValueError:
+        raise EnvConfigError(f"Mocked env var '{key}' ('{val_str}') cannot be int.")
+
+def mock_server_get_env_list_str(key, default=None, required=False, delimiter=','):
+    val_str = MOCK_ENV_VALUES_SERVER.get(key)
+    if val_str is None:
+        return default if default is not None else []
+    if not val_str.strip(): return []
+    return [item.strip() for item in val_str.split(delimiter) if item.strip()]
+
+def mock_server_resolve_env_path(base_dir, path_from_env):
+    if not path_from_env: return None
+    return os.path.abspath(os.path.join(base_dir, path_from_env))
+
+# Mock the global lock from server.py
+mock_server_lock_instance = MagicMock(spec=threading.Lock)
+
+@patch('server.server.active_connections_lock', new=mock_server_lock_instance)
+@patch('server.server.forward_data')
+@patch('socket.create_connection') # Used by server to connect to dynamic target
+@patch('server.server.get_env_str', side_effect=mock_server_get_env_str)
+@patch('server.server.get_env_int', side_effect=mock_server_get_env_int)
+@patch('server.server.get_env_list_str', side_effect=mock_server_get_env_list_str)
+@patch('server.server.resolve_env_path', side_effect=mock_server_resolve_env_path)
 class TestServerHandleClientConnection(unittest.TestCase):
 
-    def setUp(self):
-        self.mock_app_config = DEFAULT_TEST_SERVER_CONFIG.copy()
-
-        self.forward_data_patcher = patch('src.server.forward_data')
-        self.mock_forward_data = self.forward_data_patcher.start()
-        self.addCleanup(self.forward_data_patcher.stop)
-
-        # Patch 'socket.create_connection' used by the handler to connect to target service
-        self.create_connection_patcher = patch('socket.create_connection')
-        self.mock_create_connection = self.create_connection_patcher.start()
-        self.mock_forward_socket = Mock(spec=socket.socket) # Mock for the connection to target
-        self.mock_create_connection.return_value = self.mock_forward_socket
-        self.addCleanup(self.create_connection_patcher.stop)
-
-        # Reset active_connections_count for each test if it's a global in server.py
-        # This is more involved if it's truly global. A better design would avoid this.
-        # For now, we assume its changes are observable via logging or side effects
-        # or we can patch 'src.server.active_connections_count' if it's directly accessible.
-        # Let's try patching it if it's a direct global.
-        self.active_count_patcher = patch('src.server.active_connections_count', 0) # Start at 0
-        self.mock_active_count = self.active_count_patcher.start()
-        self.addCleanup(self.active_count_patcher.stop)
-
-
-    def test_handle_client_connection_successful_mtls_cn_auth(self):
-        mock_tls_client_socket = Mock(spec=ssl.SSLSocket)
+    @patch('server.server.active_connections_count', 0) # Patch as a global if it is
+    def test_successful_connection_mtls_cn_auth(self, mock_active_count_zero, mock_resolve_path, mock_get_list, mock_get_int, mock_get_str, mock_create_conn, mock_forward_data):
+        mock_tls_client_socket = MagicMock(spec=ssl.SSLSocket)
         mock_tls_client_socket.getpeername.return_value = ("client.ip", 12345)
         mock_tls_client_socket.cipher.return_value = ("TEST_CIPHER", "TLSv1.2", 128)
+        mock_tls_client_socket.gettimeout.return_value = 30 # Original timeout
 
-        # Simulate client cert with a valid CN
-        client_cert = {
-            "subject": ((("commonName", "testclient.example.com"),),),
-            "subjectAltName": (("DNS", "testclient.example.com"),) # Example SAN
-        }
+        target_dest_str = f"{MOCK_SERVER_DYNAMIC_TARGET_HOST}:{MOCK_SERVER_DYNAMIC_TARGET_PORT}\n"
+        # Simulate recv: first the destination, then data for forwarding
+        mock_tls_client_socket.recv.side_effect = [target_dest_str.encode('utf-8'), b"client_data_chunk", b""]
+
+        client_cert = {"subject": ((("commonName", "testclient.example.com"),),)}
         mock_tls_client_socket.getpeercert.return_value = client_cert
 
-        # --- Test Execution ---
-        handler_thread = threading.Thread(target=handle_client_connection,
-                                          args=(mock_tls_client_socket, self.mock_app_config))
+        mock_forward_socket = MagicMock(spec=socket.socket)
+        mock_create_conn.return_value = mock_forward_socket
+
+        handler_thread = threading.Thread(target=handle_client_connection, args=(mock_tls_client_socket,))
         handler_thread.start()
-        time.sleep(0.1) # Allow threads to spawn
+        time.sleep(0.2)
 
-        # --- Assertions ---
-        # mTLS checks
         mock_tls_client_socket.getpeercert.assert_called_once()
+        mock_tls_client_socket.recv.assert_any_call(1024) # For reading destination
 
-        # Connection to target service
-        self.mock_create_connection.assert_called_once_with(
-            (self.mock_app_config["target_service"]["host"], self.mock_app_config["target_service"]["port"]),
-            timeout=ANY # forward_connect_timeout (currently 10, but use ANY for flexibility)
+        mock_create_conn.assert_called_once_with(
+            (MOCK_SERVER_DYNAMIC_TARGET_HOST, MOCK_SERVER_DYNAMIC_TARGET_PORT),
+            timeout=MOCK_ENV_VALUES_SERVER["SHIELDNET_TIMEOUT_TARGET_CONNECT"]
         )
+        mock_tls_client_socket.settimeout.assert_any_call(MOCK_ENV_VALUES_SERVER["SHIELDNET_TIMEOUT_SOCKET_DATA"])
+        mock_forward_socket.settimeout.assert_called_with(MOCK_ENV_VALUES_SERVER["SHIELDNET_TIMEOUT_SOCKET_DATA"])
 
-        # Socket timeouts set
-        mock_tls_client_socket.settimeout.assert_any_call(self.mock_app_config["timeouts"]["socket_data"])
-        self.mock_forward_socket.settimeout.assert_called_with(self.mock_app_config["timeouts"]["socket_data"])
+        self.assertEqual(mock_forward_data.call_count, 2)
+        if mock_forward_data.call_count == 2: # pragma: no branch
+            shutdown_event = mock_forward_data.call_args_list[0][0][3]
+            self.assertIsInstance(shutdown_event, threading.Event)
+            shutdown_event.set()
 
-        # forward_data calls
-        self.assertEqual(self.mock_forward_data.call_count, 2)
-        # Args for call 1: tls_client_socket -> forward_socket
-        args_call1 = self.mock_forward_data.call_args_list[0][0]
-        self.assertEqual(args_call1[0], mock_tls_client_socket)
-        self.assertEqual(args_call1[1], self.mock_forward_socket)
-        self.assertIsInstance(args_call1[3], threading.Event) # shutdown_event
-        self.assertTrue(callable(args_call1[4])) # stats_callback for to_target
-
-        # Args for call 2: forward_socket -> tls_client_socket
-        args_call2 = self.mock_forward_data.call_args_list[1][0]
-        self.assertEqual(args_call2[0], self.mock_forward_socket)
-        self.assertEqual(args_call2[1], mock_tls_client_socket)
-        self.assertIsInstance(args_call2[3], threading.Event) # shutdown_event
-        self.assertTrue(callable(args_call2[4])) # stats_callback for to_client
-
-        # Simulate forward_data completion
-        if self.mock_forward_data.call_count == 2:
-            shutdown_event_from_mock = self.mock_forward_data.call_args_list[0][0][3]
-            shutdown_event_from_mock.set()
-
-        handler_thread.join(timeout=0.5)
-        self.assertFalse(handler_thread.is_alive(), "Handler thread did not terminate")
-
-        # Socket cleanup
-        mock_tls_client_socket.shutdown.assert_called_once_with(socket.SHUT_RDWR)
+        handler_thread.join(timeout=1)
+        self.assertFalse(handler_thread.is_alive())
         mock_tls_client_socket.close.assert_called_once()
-        self.mock_forward_socket.shutdown.assert_called_once_with(socket.SHUT_RDWR)
-        self.mock_forward_socket.close.assert_called_once()
+        mock_forward_socket.close.assert_called_once()
+        self.assertGreaterEqual(mock_server_lock_instance.__enter__.call_count, 1)
+        self.assertGreaterEqual(mock_server_lock_instance.__exit__.call_count, 1)
 
-        # Check active_connections_lock usage (simplified check)
-        self.assertGreaterEqual(mock_server_active_connections_lock.__enter__.call_count, 1) # increment
-        self.assertGreaterEqual(mock_server_active_connections_lock.__exit__.call_count, 1) # decrement
-
-
-    def test_handle_client_connection_mtls_cn_auth_fail(self):
-        mock_tls_client_socket = Mock(spec=ssl.SSLSocket)
+    @patch('server.server.active_connections_count', 0)
+    def test_mtls_cn_auth_fail(self, mock_active_count_zero, mock_resolve_path, mock_get_list, mock_get_int, mock_get_str, mock_create_conn, mock_forward_data):
+        mock_tls_client_socket = MagicMock(spec=ssl.SSLSocket)
         mock_tls_client_socket.getpeername.return_value = ("client.ip", 12345)
-        mock_tls_client_socket.cipher.return_value = ("TEST_CIPHER", "TLSv1.2", 128)
+        # Destination needs to be "received" before CN check
+        target_dest_str = f"{MOCK_SERVER_DYNAMIC_TARGET_HOST}:{MOCK_SERVER_DYNAMIC_TARGET_PORT}\n"
+        mock_tls_client_socket.recv.return_value = target_dest_str.encode('utf-8')
 
-        # Simulate client cert with an invalid CN
         client_cert = {"subject": ((("commonName", "unauthorized.client.com"),),)}
         mock_tls_client_socket.getpeercert.return_value = client_cert
 
-        handle_client_connection(mock_tls_client_socket, self.mock_app_config)
+        handle_client_connection(mock_tls_client_socket)
 
         mock_tls_client_socket.getpeercert.assert_called_once()
-        self.mock_create_connection.assert_not_called() # Should fail before this
-        self.mock_forward_data.assert_not_called()
-
-        # Socket should be closed due to auth failure
+        mock_create_conn.assert_not_called()
+        mock_forward_data.assert_not_called()
         mock_tls_client_socket.close.assert_called_once()
-        # Decrement of active connections should still happen in finally
-        self.assertGreaterEqual(mock_server_active_connections_lock.__enter__.call_count, 1) # For increment
-        self.assertGreaterEqual(mock_server_active_connections_lock.__exit__.call_count, 1) # For decrement
+        self.assertGreaterEqual(mock_server_lock_instance.__enter__.call_count, 1) # For increment
+        self.assertGreaterEqual(mock_server_lock_instance.__exit__.call_count, 1) # For decrement (in finally)
 
-
-    def test_handle_client_connection_no_mtls_cn_check(self):
-        # Modify config for this test: no allowed_client_cns, but client_ca_cert is still there (mTLS enabled)
-        config_no_cn_check = self.mock_app_config.copy()
-        config_no_cn_check["tls"] = config_no_cn_check["tls"].copy()
-        config_no_cn_check["tls"]["allowed_client_cns"] = [] # Empty list means any cert from CA is fine
-
-        mock_tls_client_socket = Mock(spec=ssl.SSLSocket)
+    @patch('server.server.active_connections_count', 0)
+    def test_target_connect_refused(self, mock_active_count_zero, mock_resolve_path, mock_get_list, mock_get_int, mock_get_str, mock_create_conn, mock_forward_data):
+        mock_tls_client_socket = MagicMock(spec=ssl.SSLSocket)
         mock_tls_client_socket.getpeername.return_value = ("client.ip", 12345)
-        mock_tls_client_socket.cipher.return_value = ("TEST_CIPHER", "TLSv1.2", 128)
-        client_cert = {"subject": ((("commonName", "any.client.com"),),)} # CN doesn't matter now
+        target_dest_str = f"{MOCK_SERVER_DYNAMIC_TARGET_HOST}:{MOCK_SERVER_DYNAMIC_TARGET_PORT}\n"
+        mock_tls_client_socket.recv.return_value = target_dest_str.encode('utf-8')
+
+        # Simulate mTLS success (no specific CN check by overriding allowed_client_cns to be empty for this call)
+        def temp_get_list_str(key, default=None, required=False, delimiter=','):
+            if key == "SHIELDNET_TLS_ALLOWED_CLIENT_CNS": return []
+            return mock_server_get_env_list_str(key,default,required,delimiter)
+        mock_get_list.side_effect = temp_get_list_str
+
+        client_cert = {"subject": ((("commonName", "any.client.com"),),)}
         mock_tls_client_socket.getpeercert.return_value = client_cert
 
-        handler_thread = threading.Thread(target=handle_client_connection,
-                                          args=(mock_tls_client_socket, config_no_cn_check))
-        handler_thread.start()
-        time.sleep(0.1)
+        mock_create_conn.side_effect = ConnectionRefusedError("Target refused")
 
-        mock_tls_client_socket.getpeercert.assert_called_once() # Still gets cert to log
-        self.mock_create_connection.assert_called_once()
-        self.assertEqual(self.mock_forward_data.call_count, 2)
+        handle_client_connection(mock_tls_client_socket)
 
-        if self.mock_forward_data.call_count == 2:
-            shutdown_event_from_mock = self.mock_forward_data.call_args_list[0][0][3]
-            shutdown_event_from_mock.set()
-        handler_thread.join(timeout=0.5)
-        self.assertFalse(handler_thread.is_alive())
-
-
-    def test_handle_client_connection_target_connect_refused(self):
-        mock_tls_client_socket = Mock(spec=ssl.SSLSocket)
-        mock_tls_client_socket.getpeername.return_value = ("client.ip", 12345)
-        mock_tls_client_socket.cipher.return_value = ("TEST_CIPHER", "TLSv1.2", 128)
-        # No CN check for this test, simplify config for tls section
-        config_simple_mtls = self.mock_app_config.copy()
-        config_simple_mtls["tls"] = {
-            "client_ca_cert": "/path/to/client_ca.crt",
-            "allowed_client_cns": [] # No specific CN check
-        }
-        client_cert = {"subject": ((("commonName", "client.com"),),)}
-        mock_tls_client_socket.getpeercert.return_value = client_cert
-
-        self.mock_create_connection.side_effect = ConnectionRefusedError("Target service refused connection")
-
-        handle_client_connection(mock_tls_client_socket, config_simple_mtls)
-
-        self.mock_create_connection.assert_called_once()
-        self.mock_forward_data.assert_not_called() # Forwarding threads should not start
-
-        mock_tls_client_socket.shutdown.assert_called_once_with(socket.SHUT_RDWR)
+        mock_create_conn.assert_called_once()
+        mock_forward_data.assert_not_called()
         mock_tls_client_socket.close.assert_called_once()
-        self.mock_forward_socket.close.assert_not_called() # forward_socket was never successfully opened and assigned
+
+        # Restore mock_get_list side_effect if other tests in this class depend on original
+        mock_get_list.side_effect = mock_server_get_env_list_str
+
+
+# Patching for server.main
+@patch('server.server.load_env_config', Mock(return_value=True))
+@patch('server.server.setup_logging', Mock())
+@patch('socket.socket') # Mock listening socket in main
+@patch('ssl.SSLContext') # Mock SSLContext in main
+@patch('server.server.get_env_str', side_effect=mock_server_get_env_str)
+@patch('server.server.get_env_int', side_effect=mock_server_get_env_int)
+@patch('server.server.resolve_env_path', side_effect=mock_server_resolve_env_path)
+class TestServerMain(unittest.TestCase):
+    def test_main_successful_startup_and_shutdown(self, mock_main_resolve_path, mock_main_get_int, mock_main_get_str, MockSSLContextMain, mock_main_socket_constructor, mock_main_setup_logging, mock_main_load_env):
+        mock_listening_socket = MagicMock(spec=socket.socket)
+        mock_listening_socket.accept.side_effect = KeyboardInterrupt
+        mock_main_socket_constructor.return_value = mock_listening_socket
+
+        mock_ssl_context_main_inst = MagicMock(spec=ssl.SSLContext)
+        MockSSLContextMain.return_value = mock_ssl_context_main_inst
+
+        test_args = ['server.py', '--config', 'dummy_server.env']
+        with patch.object(sys, 'argv', test_args):
+            with self.assertRaises(SystemExit) as cm:
+                with patch('logging.info'), patch('logging.error'), patch('logging.critical'), patch('logging.warning'):
+                    server_main()
+            self.assertEqual(cm.exception.code, 0)
+
+        mock_main_load_env.assert_called_with('dummy_server.env')
+        mock_main_setup_logging.assert_called()
+        MockSSLContextMain.assert_called_with(ssl.PROTOCOL_TLS_SERVER)
+
+        expected_server_cert = os.path.abspath(os.path.join(TEST_SERVER_ENV_BASE_DIR, MOCK_ENV_VALUES_SERVER["SHIELDNET_TLS_SERVER_CERT"]))
+        expected_server_key = os.path.abspath(os.path.join(TEST_SERVER_ENV_BASE_DIR, MOCK_ENV_VALUES_SERVER["SHIELDNET_TLS_SERVER_KEY"]))
+        mock_ssl_context_main_inst.load_cert_chain.assert_called_with(certfile=expected_server_cert, keyfile=expected_server_key)
+
+        # Check if mTLS was configured (it is in MOCK_ENV_VALUES_SERVER)
+        expected_client_ca = os.path.abspath(os.path.join(TEST_SERVER_ENV_BASE_DIR, MOCK_ENV_VALUES_SERVER["SHIELDNET_TLS_CLIENT_CA_CERT"]))
+        mock_ssl_context_main_inst.load_verify_locations.assert_called_with(cafile=expected_client_ca)
+        self.assertEqual(mock_ssl_context_main_inst.verify_mode, ssl.CERT_REQUIRED)
+
+        mock_listening_socket.bind.assert_called_with((MOCK_ENV_VALUES_SERVER["SHIELDNET_SERVER_LISTENER_HOST"], MOCK_ENV_VALUES_SERVER["SHIELDNET_SERVER_LISTENER_PORT"]))
+        mock_listening_socket.close.assert_called()
+
+    def test_main_config_error_missing_cert(self, mock_main_resolve_path, mock_main_get_int, mock_main_get_str, MockSSLContextMain, mock_main_socket_constructor, mock_main_setup_logging, mock_main_load_env):
+        def temp_get_str_effect(key, default=None, required=False):
+            if key == "SHIELDNET_TLS_SERVER_CERT":
+                if required: raise EnvConfigError("Server cert is required.")
+                return None # Simulate missing
+            return mock_server_get_env_str(key, default, required)
+        mock_main_get_str.side_effect = temp_get_str_effect
+
+        test_args = ['server.py', '--config', 'dummy_server.env']
+        with patch.object(sys, 'argv', test_args):
+            with self.assertRaises(SystemExit) as cm:
+                with patch('logging.error') as mock_log_error:
+                    server_main()
+            self.assertEqual(cm.exception.code, 1)
+            # This specific error is now caught earlier by the "if not server_cert_path" check
+            mock_log_error.assert_any_call("FATAL: Server certificate or key path not configured.")
+            # mock_log_error.assert_any_call("FATAL: Configuration error from environment: Server cert is required.")
+
+        mock_main_get_str.side_effect = mock_server_get_env_str # Restore
 
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+```

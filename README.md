@@ -86,139 +86,187 @@ Le système se compose de deux composants principaux : `client.py` et `server.py
 ## Démarrage rapide
 
 ### 1. Prérequis
-*   Python 3.7+
-*   OpenSSL (pour générer les certificats)
-*   Docker et Docker Compose (pour l'exécution et les tests en conteneur)
-*   `PyYAML` (installer via `pip install -r requirements.txt`)
+*   Python 3.9+ (le projet utilise des fonctionnalités de `python:3.9-slim` dans Docker)
+*   Docker et Docker Compose (pour l'exécution du serveur en conteneur)
+*   `PyYAML` et `cryptography` (installer via `pip install -r requirements.txt`)
 
-### 2. Génération des certificats TLS (auto-signés pour tests)
+### 2. Génération des certificats TLS
 
-Vous aurez besoin d'une Autorité de Certification (CA), d'un certificat serveur signé par la CA, et d'un certificat client signé par la CA pour le mTLS.
+Ce projet inclut un script Python pour générer facilement les certificats auto-signés nécessaires pour les tests.
 
-Créez un dossier `certs` à la racine du projet : `mkdir certs && cd certs`
+1.  Assurez-vous d'avoir installé les dépendances :
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  Créez un dossier `certs` à la racine du projet si ce n'est pas déjà fait : `mkdir -p certs`
+3.  Exécutez le script de génération de certificats :
+    ```bash
+    python certs.py
+    ```
+    Cela créera les fichiers suivants dans le dossier `certs/` :
+    *   `ca.crt`, `ca.key`: Autorité de Certification (CA)
+    *   `server.crt`, `server.key`: Certificat et clé privée du serveur (CN=`tunnel-server`, avec SANs pour `localhost` et `127.0.0.1`)
+    *   `client.crt`, `client.key`: Certificat et clé privée du client (CN=`client1`)
 
-**a. Créer la CA :**
-```bash
-# Générer la clé privée de la CA
-openssl genpkey -algorithm RSA -out ca.key -pkeyopt rsa_keygen_bits:2048
-# Générer le certificat CA (auto-signé)
-openssl req -new -x509 -key ca.key -out ca.crt -days 365 -subj "/CN=MyTestCA"
-```
+    Ces certificats sont configurés pour fonctionner avec les exemples et le `docker-compose.yml`.
 
-**b. Créer le certificat serveur :**
-(Remplacez `your.server.com` par le vrai nom d'hôte ou IP utilisé par le client, ou `tunnel-server` pour Docker Compose).
-```bash
-SERVER_HOSTNAME="your.server.com" # Ou "tunnel-server" pour docker-compose
-openssl genpkey -algorithm RSA -out server.key -pkeyopt rsa_keygen_bits:2048
-openssl req -new -key server.key -out server.csr -subj "/CN=${SERVER_HOSTNAME}"
-# Signer le certificat serveur avec la CA
-openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 360 -extfile <(printf "subjectAltName=DNS:${SERVER_HOSTNAME},DNS:localhost,IP:127.0.0.1")
-```
-*Note : `localhost` et `127.0.0.1` sont ajoutés aux SANs pour faciliter les tests locaux si le serveur tourne sur l'hôte.*
-
-**c. Créer le certificat client :**
-(Remplacez `your.client.id` par un identifiant adapté si vous utilisez `allowed_client_cns` côté serveur).
-```bash
-CLIENT_ID="your.client.id" # ex : "client1" ou "testclient.example.com"
-openssl genpkey -algorithm RSA -out client.key -pkeyopt rsa_keygen_bits:2048
-openssl req -new -key client.key -out client.csr -subj "/CN=${CLIENT_ID}"
-# Signer le certificat client avec la CA
-openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAserial ca.srl -out client.crt -days 360
-```
-Après ces étapes, le dossier `certs/` doit contenir : `ca.crt`, `ca.key`, `ca.srl`, `server.crt`, `server.key`, `server.csr`, `client.crt`, `client.key`, `client.csr`. Les fichiers `.csr` et `ca.key` (après signature) ne sont pas strictement nécessaires pour l'exécution mais font partie du processus de génération.
+**Alternative (Manuel avec OpenSSL) :**
+Si vous préférez générer les certificats manuellement avec OpenSSL, vous pouvez suivre les étapes classiques. Assurez-vous que le CN du serveur correspond à ce que le client attendra (par exemple, `tunnel-server` pour les tests Docker, ou le nom d'hôte réel) et que les certificats client/serveur sont signés par la même CA. Le script `certs.py` est cependant la méthode recommandée pour ce projet.
 
 ### 3. Configuration
 
-Copiez les fichiers de configuration exemple et personnalisez-les :
+La configuration du client et du serveur se fait désormais via des fichiers `.env`. Des fichiers d'exemple (`.env.example`) sont fournis dans `client/config/` et `server/config/`.
+
+1.  **Pour le client :** Copiez `client/config/.env.example` vers `client/config/.env` et personnalisez les valeurs.
+2.  **Pour le serveur :** Copiez `server/config/.env.example` vers `server/config/.env` et personnalisez les valeurs.
+
 ```bash
-mkdir -p config logs/client logs/server
-cp config/client_config.yaml.example config/client_config.yaml
-cp config/server_config.yaml.example config/server_config.yaml
+mkdir -p client/config server/config logs/client logs/server # Créez les dossiers nécessaires
+
+# Pour le client
+cp client/config/.env.example client/config/.env
+# Éditez client/config/.env
+
+# Pour le serveur
+cp server/config/.env.example server/config/.env
+# Éditez server/config/.env
 ```
 
-Éditez `config/client_config.yaml` et `config/server_config.yaml`.
+**Variables d'environnement clés (voir les fichiers `.env.example` pour la liste complète) :**
 
-**Paramètres clés à ajuster :**
+*   **Client (`client/config/.env`) :**
+    *   `SHIELDNET_LOCAL_LISTENER_PORT`: Port d'écoute local du client (ex: `1080`).
+    *   `SHIELDNET_REMOTE_SERVER_HOST`: Hôte du serveur ShieldNet (ex: `localhost`).
+    *   `SHIELDNET_REMOTE_SERVER_PORT`: Port du serveur ShieldNet (ex: `8443`).
+    *   `SHIELDNET_REMOTE_SERVER_CA_CERT`: Chemin vers `ca.crt` (ex: `certs/ca.crt`).
+    *   `SHIELDNET_TLS_CLIENT_CERT`, `SHIELDNET_TLS_CLIENT_KEY`: Pour mTLS.
+    *   `SHIELDNET_LOG_FILE`, `SHIELDNET_LOG_LEVEL`, etc. pour la journalisation.
+    *   Divers `SHIELDNET_TIMEOUT_*` pour les timeouts.
 
-*   **`client_config.yaml`** :
-    *   `remote_server.host` : Nom d'hôte/IP du serveur. Pour Docker Compose, utilisez `tunnel-server`.
-    *   `remote_server.port` : Port d'écoute du serveur (ex : `8443`).
-    *   `remote_server.server_ca_cert` : Chemin vers le certificat CA (ex : `certs/ca.crt`).
-    *   `tls.client_cert` : Chemin vers le certificat client (ex : `certs/client.crt`).
-    *   `tls.client_key` : Chemin vers la clé privée du client (ex : `certs/client.key`).
-    *   `logging.log_file` : ex : `logs/client.log`.
-    *   Chemins pour Docker : en conteneur, les chemins doivent être relatifs à `/app` (ex : `/app/certs/ca.crt`), logs dans `/app/logs/client.log` si montés dans le volume log. Voir les exemples/commentaires dans `docker-compose.yml`.
+*   **Serveur (`server/config/.env`) :**
+    *   `SHIELDNET_SERVER_LISTENER_HOST`: Hôte d'écoute du serveur (ex: `0.0.0.0`).
+    *   `SHIELDNET_SERVER_LISTENER_PORT`: Port d'écoute du serveur (ex: `8443`).
+    *   `SHIELDNET_TLS_SERVER_CERT`, `SHIELDNET_TLS_SERVER_KEY`: Certificat et clé du serveur.
+    *   `SHIELDNET_TLS_CLIENT_CA_CERT`: Pour mTLS (chemin vers `ca.crt`).
+    *   `SHIELDNET_TLS_ALLOWED_CLIENT_CNS`: Pour mTLS (liste de CNs autorisés, séparés par des virgules).
+    *   `SHIELDNET_TIMEOUT_TARGET_CONNECT`: Timeout pour la connexion à la cible dynamique.
+    *   `SHIELDNET_LOG_FILE`, `SHIELDNET_LOG_LEVEL`, etc.
 
-*   **`server_config.yaml`** :
-    *   `server_listener.host` : Typiquement `0.0.0.0` pour écouter sur toutes les interfaces.
-    *   `server_listener.port` : Port d'écoute du serveur (ex : `8443`).
-    *   `target_service.host` : Nom d'hôte/IP du service cible. Pour Docker Compose, utilisez `echo-server`.
-    *   `target_service.port` : Port du service cible (ex : `8080` pour le serveur echo de test).
-    *   `tls.server_cert` : Chemin vers le certificat serveur (ex : `certs/server.crt`).
-    *   `tls.server_key` : Chemin vers la clé privée du serveur (ex : `certs/server.key`).
-    *   `tls.client_ca_cert` : Chemin vers le certificat CA pour la vérification mTLS (ex : `certs/ca.crt`). Si vide, mTLS désactivé (le serveur ne demandera pas de certificat client).
-    *   `tls.allowed_client_cns` : (Optionnel) Liste des CN/SAN autorisés pour les clients si mTLS actif et liste renseignée.
-    *   `logging.log_file` : ex : `logs/server.log`.
-    *   Chemins pour Docker : idem client, adaptez pour `/app/certs/...` et `/app/logs/server.log`.
+**Important pour les chemins (certificats, logs) :**
+*   Lors de l'exécution locale, les chemins relatifs dans les fichiers `.env` (par exemple `certs/ca.crt`) sont généralement résolus par rapport au répertoire racine du projet (où se trouvent `client.py` et `server.py` ou leurs dossiers respectifs).
+*   Pour Docker (serveur), les chemins spécifiés dans `server/config/.env` (comme `certs/server.crt`) seront résolus à l'intérieur du conteneur. Étant donné que `ENV_BASE_DIR` dans `server.py` est `/app` et que les volumes sont montés dans `/app` (par exemple, `./certs` est monté sur `/app/certs`), un chemin comme `certs/server.crt` dans le `.env` sera correctement trouvé à `/app/certs/server.crt`.
 
-**Exemple de configuration pour Docker Compose :**
+### 4. Architecture de Routage Dynamique
 
-Voir les commentaires dans `docker-compose.yml` pour les valeurs à utiliser dans les fichiers YAML lors de l'utilisation de Docker :
-*   `remote_server.host` du client : `tunnel-server`
-*   `target_service.host` du serveur : `echo-server`
-*   Tous les chemins de certificats dans les YAML : `certs/ca.crt` (montés dans `/app/certs/ca.crt` dans le conteneur)
-*   Chemins de logs : `logs/client.log` (montés dans `/app/logs/client.log`)
+Avec le routage dynamique, le flux de données est le suivant :
+1.  Une application locale se connecte au port d'écoute du **Client ShieldNet** (`local_listener.host`:`local_listener.port` dans `client_config.yaml`).
+2.  Le **Client ShieldNet** est lancé avec des arguments `--target-host <host>` et `--target-port <port>` qui spécifient la destination finale.
+3.  Le Client établit une connexion TLS avec le **Serveur ShieldNet**.
+4.  Immédiatement après la poignée de main TLS, le Client envoie la chaîne `<host>:<port>\n` au Serveur.
+5.  Le **Serveur ShieldNet** lit cette chaîne, se connecte à `<host>:<port>`, puis relaie les données de manière bidirectionnelle entre le Client (via le tunnel TLS) et la destination finale.
 
-### 4. Exécution de l'application
+Cela signifie que la section `target_service` dans `server_config.yaml` n'est plus utilisée pour déterminer où le trafic est acheminé.
 
-**a. Avec Docker Compose (recommandé pour tests) :**
+### 5. Exécution de l'application
 
-C'est la méthode la plus simple pour tester l'ensemble, y compris le mTLS.
-1.  Générez les certificats dans `./certs/`.
-2.  Vérifiez que `config/client_config.yaml` et `config/server_config.yaml` sont créés et pointent vers les bons services (ex : `tunnel-server`, `echo-server`) et chemins cert/log en conteneur (ex : `certs/ca.crt`, `logs/client.log`).
-3.  Créez les dossiers de logs : `mkdir -p logs/client logs/server` (Docker peut aussi les créer, mais c'est conseillé).
+**a. Déploiement du Serveur (avec Docker Compose) :**
+
+Le `docker-compose.yml` est configuré pour ne démarrer que le service `tunnel-server`.
+1.  Générez les certificats dans `./certs/` en utilisant `python certs.py`.
+2.  Assurez-vous que `server/config/.env` est créé et configuré (copiez de `.env.example`). Les chemins pour les certificats et logs doivent être corrects pour l'environnement conteneur (ex: `SHIELDNET_TLS_SERVER_CERT="certs/server.crt"` qui devient `/app/certs/server.crt` dans le conteneur).
+3.  Créez le dossier de logs du serveur : `mkdir -p logs/server`.
 
 ```bash
-# Démarrer les services en mode détaché
-docker-compose up --build -d
+# Démarrer le service tunnel-server en mode détaché
+docker-compose up --build -d tunnel-server
 
-# Voir les logs
-docker-compose logs -f tunnel-client
+# Voir les logs du serveur
 docker-compose logs -f tunnel-server
-docker-compose logs -f echo-server
 
-# Tester avec le script
-bash scripts/test_tunnel.sh
-
-# Arrêter les services
-docker-compose down -v
+# Arrêter le service
+docker-compose down # ou docker-compose stop tunnel-server
 ```
 
-**b. Exécution manuelle (Python directement) :**
+**b. Exécution manuelle du Client (Python directement) :**
 
-1.  Installez les dépendances : `pip install -r requirements.txt`
-2.  Vérifiez que les certificats sont générés et que les fichiers de configuration sont adaptés à votre environnement (ex : `remote_server.host` pointant vers l'IP réelle du serveur si pas en localhost).
-
-    **Démarrer le serveur :**
-    ```bash
-    python src/server.py --config config/server_config.yaml
-    # Pour logs verbeux :
-    # python src/server.py --config config/server_config.yaml --verbose
-    ```
+Le client est exécuté localement et se connecte au serveur (qui peut être le serveur Docker).
+1.  Installez les dépendances : `pip install -r requirements.txt`.
+2.  Assurez-vous que les certificats sont générés (`certs/`) et que `client/config/.env` est configuré (copiez de `.env.example`) pour pointer vers le serveur (ex: `SHIELDNET_REMOTE_SERVER_HOST="localhost"`, `SHIELDNET_REMOTE_SERVER_PORT="8443"`) et les bons chemins de certificats locaux.
+3.  Créez le dossier de logs du client : `mkdir -p logs/client`.
 
     **Démarrer le client :**
-    (Dans un autre terminal)
+    Le client nécessite des arguments pour la destination dynamique et peut prendre un chemin vers son fichier `.env`.
     ```bash
-    python src/client.py --config config/client_config.yaml
-    # Pour logs verbeux :
-    # python src/client.py --config config/client_config.yaml --verbose
+    python client/client.py \
+      --config client/config/.env \
+      --target-host <destination_host> \
+      --target-port <destination_port>
+    # Exemple : python client/client.py --config client/config/.env --target-host localhost --target-port 8080
+    # Pour logs verbeux : ajouter --verbose
     ```
-3.  Testez en envoyant du trafic vers le port d'écoute du client (ex : `localhost:1080` si configuré). Par exemple, si le serveur redirige vers un serveur web sur `target-host:80` :
+    *   `<destination_host>`: L'hôte final auquel le serveur doit se connecter (ex: `localhost`, `www.google.com`).
+    *   `<destination_port>`: Le port final sur `<destination_host>` (ex: `8080`, `80`).
+
+4.  Testez en envoyant du trafic vers le port d'écoute local du client (configuré dans `client/config/.env` via `SHIELDNET_LOCAL_LISTENER_PORT`, ex: `localhost:1080`). Ce trafic sera tunnelisé vers le serveur, qui le redirigera ensuite vers `--target-host`:`--target-port`.
+    Par exemple, si le client écoute sur `localhost:1080` (défini par `SHIELDNET_LOCAL_LISTENER_PORT=1080` dans son `.env`) et est lancé avec `--target-host localhost --target-port 8000` (où un service écoute sur `localhost:8000`):
+    ```bash
+    curl http://localhost:1080 # ou nc localhost 1080, etc.
+    ```
+
+### 6. Scénarios d'Exemple
+
+#### ✅ Scénario 1 : Test Local (ex: application web locale)
+
+*   **Objectif :** Accéder à un service web tournant sur `localhost:9090` via le tunnel, en faisant apparaître la connexion au service web comme venant du serveur ShieldNet (qui pourrait être sur la même machine ou une autre).
+*   **Service Cible :** Un simple serveur web Python écoutant sur `localhost:9090`.
+    ```bash
+    # Dans un terminal, démarrez un serveur web simple (nécessite Python)
+    mkdir test-site && cd test-site && echo "Hello from target service" > index.html
+    python -m http.server 9090
+    cd ..
+    ```
+*   **Serveur ShieldNet :** Démarrez le serveur ShieldNet (par exemple, via Docker Compose, écoutant sur `localhost:8443`).
+    ```bash
+    docker-compose up --build -d tunnel-server
+    ```
+*   **Client ShieldNet :** Démarrez le client pour qu'il écoute localement sur (par exemple) `localhost:1080` et dise au serveur ShieldNet de se connecter à `localhost:9090`.
+    ```bash
+    python client/client.py \
+      --config client/config/.env \
+      --target-host localhost \
+      --target-port 9090
+    ```
+    (Assurez-vous que `client/config/.env` contient `SHIELDNET_REMOTE_SERVER_HOST="localhost"`, `SHIELDNET_REMOTE_SERVER_PORT="8443"`, et `SHIELDNET_LOCAL_LISTENER_PORT="1080"`).
+*   **Test :** Ouvrez un navigateur ou utilisez `curl` pour accéder à `http://localhost:1080`.
     ```bash
     curl http://localhost:1080
     ```
+    Vous devriez voir "Hello from target service". Le trafic est allé de `curl` -> client ShieldNet (1080) -> serveur ShieldNet (8443) -> service web Python (9090).
 
-### 5. Lancer les tests unitaires
+#### ✅ Scénario 2 : Routage vers un Service Externe (ex: site web public)
+
+*   **Objectif :** Accéder à `example.com:80` via le tunnel, de sorte que la requête à `example.com` semble provenir de l'IP du serveur ShieldNet.
+*   **Service Cible :** `example.com` sur le port `80`.
+*   **Serveur ShieldNet :** Démarrez le serveur ShieldNet (peut être sur une machine distante avec une IP publique, ou localement via Docker pour ce test). Il écoute sur son port public (ex: `YOUR_SERVER_IP:8443`).
+    ```bash
+    # Sur la machine du serveur (ou localement avec Docker)
+    docker-compose up --build -d tunnel-server
+    ```
+*   **Client ShieldNet :** Sur votre machine locale, démarrez le client pour qu'il écoute sur `localhost:1081` et dise au serveur ShieldNet de se connecter à `example.com:80`.
+    ```bash
+    python client/client.py \
+      --config client/config/.env \
+      --target-host example.com \
+      --target-port 80
+    ```
+    (Modifiez `client/config/.env` pour que `SHIELDNET_REMOTE_SERVER_HOST` pointe vers l'IP/hostname de votre serveur ShieldNet, `SHIELDNET_REMOTE_SERVER_PORT` vers son port d'écoute, et `SHIELDNET_LOCAL_LISTENER_PORT` est `1081` pour cet exemple).
+*   **Test :** Accédez à `http://localhost:1081` avec `curl`.
+    ```bash
+    curl -v http://localhost:1081
+    ```
+    Vous devriez recevoir la page d'accueil de `example.com`. Le serveur ShieldNet a effectué la requête à `example.com` pour vous.
+
+### 7. Lancer les tests unitaires
 
 Placez-vous à la racine du projet.
 ```bash
@@ -226,27 +274,17 @@ python -m unittest discover -s tests -v
 ```
 Cela détectera et exécutera tous les tests du dossier `tests`.
 
-### 6. Script de test end-to-end
+### 8. Script de test end-to-end (`scripts/test_tunnel.sh`)
 
-Le script `scripts/test_tunnel.sh` automatise les tests via Docker Compose :
-1.  Démarre les services `docker-compose` (client, serveur, echo-server).
-2.  Attend leur initialisation.
-3.  Envoie un message de test via `netcat` à `localhost:1080` (port du client).
-4.  Vérifie si la réponse écho correspond au message envoyé.
-5.  Affiche succès ou échec.
-
-Assurez-vous que vos fichiers `config/*.yaml` sont adaptés à l'environnement Docker Compose (noms de services comme hôtes, chemins `/app/certs`).
-```bash
-bash scripts/test_tunnel.sh
-```
-Pour nettoyer automatiquement les conteneurs Docker après le script, décommentez `trap cleanup EXIT` en haut de `test_tunnel.sh`.
+Le script `scripts/test_tunnel.sh` existant utilise `docker-compose` pour démarrer le client, le serveur et un `echo-server`. Avec les modifications pour un déploiement serveur uniquement via `docker-compose`, ce script nécessitera des ajustements importants (par exemple, exécuter le client localement). **Ce script n'est pas mis à jour dans le cadre de cette refactorisation initiale axée sur le routage dynamique et le déploiement Docker du serveur uniquement.**
 
 ## Développement
 
-*   **Style de code** : Suivre PEP 8. Utilisez un linter comme Flake8.
-*   **Type Hinting** : Utilisé dans tout le code.
-*   **Logging** : Utilisez le module `logging`. Voir `src/common/logging_setup.py`.
-*   **Tests** : Ajoutez des tests unitaires pour toute nouvelle fonctionnalité dans `tests/`. Maintenez le script de test end-to-end.
+*   **Style de code** : Suivre PEP 8. Utilisez un linter comme Flake8. Les annotations de type sont utilisées.
+*   **Journalisation** : Utilise le module `logging` standard. Voir `client/common/logging_setup.py`.
+*   **Configuration** : Via fichiers `.env` et `client/common/env_config_loader.py`.
+*   **TLS** : Paramètres TLS 1.2 minimum, mTLS optionnel (basé sur la configuration serveur via variables d'environnement).
+*   **Tests** : Des tests unitaires sont présents dans `tests/` (auront besoin d'adaptation pour la configuration `.env`).
 
 ## Licence
 

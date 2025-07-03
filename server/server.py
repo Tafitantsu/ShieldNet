@@ -5,17 +5,27 @@ import threading
 import logging
 import sys # For sys.exit
 import time # For session uptime
+import os # For path operations
 
-from common.config_loader import load_and_validate_config, get_config_value, ConfigError
-from common.logging_setup import setup_logging
-from common.network_utils import forward_data # Import the new forward_data
+# Use the new .env config loader
+# Assuming common utilities are accessible similarly to how client accesses them.
+# If server has its own common dir, this path might need adjustment or mirroring the loader.
+from client.common.env_config_loader import (
+    load_env_config, get_env_str, get_env_int, get_env_bool,
+    get_env_list_str, resolve_env_path, EnvConfigError
+)
+from client.common.logging_setup import setup_logging # Assuming shared logging setup
+from client.common.network_utils import forward_data   # Assuming shared network utils
+
 
 # Initial basic logging to catch early errors (e.g., config loading)
 # This will be replaced by setup_logging() once config is loaded.
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Global config variable
-config = None
+# Base directory for resolving relative paths from .env (e.g., certs, logs)
+# Similar to client, this assumes project root or where server.py is run from.
+ENV_BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 # --- Statistics Globals ---
 active_connections_count = 0
@@ -29,11 +39,12 @@ active_connections_lock = threading.Lock()
 
 # The old forward_data function is removed from here.
 
-def handle_client_connection(tls_client_socket, app_config):
+def handle_client_connection(tls_client_socket):
     """
     Handles a single client connection from a ShieldNet client:
-    1. Establishes a plain TCP connection to the configured forward_host:forward_port.
-    2. Sets up two threads to forward data bidirectionally.
+    1. Reads the target destination (host:port) sent by the client.
+    2. Establishes a plain TCP connection to this dynamic target.
+    3. Sets up two threads to forward data bidirectionally.
     """
     client_addr = "unknown"
     try:
@@ -49,10 +60,13 @@ def handle_client_connection(tls_client_socket, app_config):
     logging.info(f"Handling client connection from {client_addr}. Cipher: {tls_client_socket.cipher()}")
 
     # mTLS Client Certificate CN/SAN Validation
-    client_ca_cert_path = get_config_value(app_config, "tls.client_ca_cert")
-    allowed_client_cns = get_config_value(app_config, "tls.allowed_client_cns", default=[])
+    # Resolve paths from .env
+    client_ca_cert_path_env = resolve_env_path(ENV_BASE_DIR, get_env_str("SHIELDNET_TLS_CLIENT_CA_CERT"))
+    allowed_client_cns_str = get_env_str("SHIELDNET_TLS_ALLOWED_CLIENT_CNS", "")
+    allowed_client_cns_list = get_env_list_str("SHIELDNET_TLS_ALLOWED_CLIENT_CNS", default=[])
 
-    if client_ca_cert_path and allowed_client_cns: # mTLS is on AND specific CNs are required
+
+    if client_ca_cert_path_env and allowed_client_cns_list: # mTLS is on AND specific CNs are required
         peer_cert = tls_client_socket.getpeercert()
         if not peer_cert:
             logging.error(f"Client {client_addr} did not provide a certificate, but mTLS with CN check is configured. Closing connection.")
@@ -80,30 +94,79 @@ def handle_client_connection(tls_client_socket, app_config):
 
         is_authorized = False
         for presented_cn in client_cert_subjects:
-            if presented_cn in allowed_client_cns:
+            if presented_cn in allowed_client_cns_list:
                 is_authorized = True
                 logging.info(f"Client {client_addr} authorized via CN/SAN: '{presented_cn}'.")
                 break
 
         if not is_authorized:
-            logging.warning(f"Client {client_addr} presented certificate subjects {client_cert_subjects}, but none are in the allowed list: {allowed_client_cns}. Closing connection.")
+            logging.warning(f"Client {client_addr} presented certificate subjects {client_cert_subjects}, but none are in the allowed list: {allowed_client_cns_list}. Closing connection.")
             tls_client_socket.close()
             return
-    elif client_ca_cert_path: # mTLS is on, but no specific CNs to check (any cert signed by CA is okay)
+    elif client_ca_cert_path_env: # mTLS is on (CA provided), but no specific CNs to check (allowed_client_cns_list is empty)
         peer_cert = tls_client_socket.getpeercert()
         if not peer_cert:
-            logging.error(f"Client {client_addr} did not provide a certificate, but mTLS is configured (no specific CNs). Closing connection.")
+            logging.error(f"Client {client_addr} did not provide a certificate, but mTLS (client CA specified) is configured. Closing connection.")
             tls_client_socket.close()
             return
         logging.info(f"Client {client_addr} provided a certificate, validated by CA. Proceeding (no specific CN check). Cert: {peer_cert.get('subject', 'N/A')}")
 
+    # Read the target destination from the client
+    # Expecting "host:port\n"
+    target_host = None
+    target_port = None
+    try:
+        # Set a short timeout for reading the destination
+        # Original socket timeout is restored or set later.
+        original_timeout = tls_client_socket.gettimeout()
+        tls_client_socket.settimeout(10) # 10 seconds to receive destination
 
-    forward_host = get_config_value(app_config, "target_service.host")
-    forward_port = get_config_value(app_config, "target_service.port")
-    socket_data_timeout = get_config_value(app_config, "timeouts.socket_data", 60)
-    # TODO: Add a specific connect_timeout for the forward_socket from server config,
-    # similar to how client has `timeouts.connect`. For now, using a default for create_connection.
-    forward_connect_timeout = 10 # Default, make this configurable
+        destination_buffer = b""
+        while not destination_buffer.endswith(b"\n"):
+            chunk = tls_client_socket.recv(1024) # Read in chunks
+            if not chunk:
+                logging.error(f"Client {client_addr} disconnected before sending target destination.")
+                tls_client_socket.close()
+                return
+            destination_buffer += chunk
+            if len(destination_buffer) > 4096: # Prevent buffer overflow for destination string
+                logging.error(f"Client {client_addr} sent oversized target destination string. Closing.")
+                tls_client_socket.close()
+                return
+
+        tls_client_socket.settimeout(original_timeout) # Restore original timeout behavior
+
+        destination_str = destination_buffer.decode('utf-8').strip()
+        if ':' not in destination_str:
+            raise ValueError("Invalid destination format. Expected host:port.")
+
+        target_host, port_str = destination_str.rsplit(':', 1)
+        target_port = int(port_str)
+        if not (0 < target_port < 65536):
+            raise ValueError(f"Invalid port number: {target_port}")
+
+        logging.info(f"Client {client_addr} requested forwarding to {target_host}:{target_port}")
+
+    except (ValueError, UnicodeDecodeError) as e:
+        logging.error(f"Client {client_addr} sent invalid target destination: {e}. Raw: '{destination_buffer if 'destination_buffer' in locals() else 'N/A'}' Closing connection.")
+        tls_client_socket.close()
+        return
+    except socket.timeout:
+        logging.error(f"Timeout waiting for target destination from client {client_addr}. Closing connection.")
+        tls_client_socket.close()
+        return
+    except socket.error as e:
+        logging.error(f"Socket error reading target destination from client {client_addr}: {e}. Closing connection.")
+        tls_client_socket.close()
+        return
+    except Exception as e: # Catch-all for unexpected errors
+        logging.error(f"Unexpected error reading target destination from client {client_addr}: {e}", exc_info=True)
+        tls_client_socket.close()
+        return
+
+    # Configurable values from .env
+    socket_data_timeout = get_env_int("SHIELDNET_TIMEOUT_SOCKET_DATA", 60)
+    forward_connect_timeout = get_env_int("SHIELDNET_TIMEOUT_TARGET_CONNECT", 10)
 
     forward_socket = None
     session_start_time = time.time()
@@ -114,11 +177,12 @@ def handle_client_connection(tls_client_socket, app_config):
     global active_connections_count
     with active_connections_lock:
         active_connections_count += 1
-    logging.info(f"Active connections: {active_connections_count} (client {client_addr} connected)")
+    logging.info(f"Active connections: {active_connections_count} (client {client_addr} connected, target: {target_host}:{target_port})")
 
     try:
-        forward_socket = socket.create_connection((forward_host, forward_port), timeout=forward_connect_timeout)
-        logging.info(f"Successfully connected to forward destination {forward_host}:{forward_port} for client {client_addr}")
+        # Use the dynamically received target_host and target_port
+        forward_socket = socket.create_connection((target_host, target_port), timeout=forward_connect_timeout)
+        logging.info(f"Successfully connected to dynamic target {target_host}:{target_port} for client {client_addr}")
 
         # Apply data timeouts to both sockets involved in forwarding
         if socket_data_timeout and socket_data_timeout > 0:
@@ -146,12 +210,12 @@ def handle_client_connection(tls_client_socket, app_config):
 
         thread_to_forward = threading.Thread(
             target=forward_data,
-            args=(tls_client_socket, forward_socket, f"TLS client {client_addr} -> target {forward_host}:{forward_port}", shutdown_event, update_bytes_to_target),
+            args=(tls_client_socket, forward_socket, f"TLS client {client_addr} -> target {target_host}:{target_port}", shutdown_event, update_bytes_to_target),
             daemon=True, name=f"Fwd-ToTarget-{client_addr}"
         )
         thread_to_client = threading.Thread(
             target=forward_data,
-            args=(forward_socket, tls_client_socket, f"Target {forward_host}:{forward_port} -> TLS client {client_addr}", shutdown_event, update_bytes_to_client),
+            args=(forward_socket, tls_client_socket, f"Target {target_host}:{target_port} -> TLS client {client_addr}", shutdown_event, update_bytes_to_client),
             daemon=True, name=f"Fwd-ToClient-{client_addr}"
         )
 
@@ -163,13 +227,13 @@ def handle_client_connection(tls_client_socket, app_config):
             thread_to_client.join(timeout=0.1)
 
     except socket.gaierror as e:
-        logging.error(f"DNS resolution error for forward host {forward_host} (client {client_addr}): {e}")
+        logging.error(f"DNS resolution error for dynamic target host {target_host} (client {client_addr}): {e}")
     except ConnectionRefusedError:
-        logging.error(f"Forward connection to {forward_host}:{forward_port} refused (client {client_addr}).")
-    except socket.timeout:
-        logging.error(f"Timeout connecting to forward destination {forward_host}:{forward_port} (client {client_addr}).")
+        logging.error(f"Dynamic target connection to {target_host}:{target_port} refused (client {client_addr}).")
+    except socket.timeout: # This could be from create_connection to target or data timeout later
+        logging.error(f"Timeout related to dynamic target {target_host}:{target_port} (client {client_addr}). Check if it was during connection or data transfer.")
     except Exception as e:
-        logging.error(f"Error handling client {client_addr} or connecting to forward destination: {e}", exc_info=True)
+        logging.error(f"Error handling client {client_addr} or connecting to dynamic target {target_host}:{target_port}: {e}", exc_info=True)
     finally:
         # Ensure shutdown event is set for the other thread if one fails.
         if 'shutdown_event' in locals(): # Check if shutdown_event was initialized
@@ -208,37 +272,58 @@ def handle_client_connection(tls_client_socket, app_config):
 
 
 def main():
-    global config
-
     parser = argparse.ArgumentParser(description="ShieldNet TLS Server")
-    parser.add_argument('--config', type=str, default='config/server_config.yaml', help="Path to the server configuration file (default: config/server_config.yaml).")
-    parser.add_argument('--verbose', '-v', action='store_const', const='DEBUG', help="Enable DEBUG level logging. Overrides config file log level.")
+    parser.add_argument('--config', type=str, default='server/config/.env', help="Path to the server .env configuration file (default: server/config/.env).")
+    parser.add_argument('--verbose', '-v', action='store_const', const='DEBUG', help="Enable DEBUG level logging. Overrides .env log level.")
     parser.add_argument('--debug', action='store_const', const='DEBUG', help="Alias for --verbose.")
 
     args = parser.parse_args()
     cli_log_level_override = args.verbose or args.debug
 
+    # Load .env configuration
+    env_file_path = args.config
+    if not load_env_config(env_file_path):
+        logging.warning(f"Could not load .env file from {env_file_path}. Relying on environment variables or defaults.")
+    else:
+        logging.info(f"Configuration loaded from {env_file_path}")
+
     try:
-        config = load_and_validate_config(args.config, "server")
-        # Setup logging using the loaded configuration
-        setup_logging(get_config_value(config, "logging", default={}), cli_log_level_override=cli_log_level_override)
-        logging.info(f"Configuration loaded successfully from {args.config}")
-    except FileNotFoundError:
-        logging.error(f"FATAL: Configuration file not found: {args.config}. Please ensure the path is correct.")
-        sys.exit(1)
-    except ConfigError as e:
-        logging.error(f"FATAL: Configuration error: {e}")
+        # Setup logging using environment variables
+        log_level_env = get_env_str("SHIELDNET_LOG_LEVEL", "INFO")
+        log_file_env = resolve_env_path(ENV_BASE_DIR, get_env_str("SHIELDNET_LOG_FILE", "logs/server/server.log"))
+        log_rotation_bytes_env = get_env_int("SHIELDNET_LOG_ROTATION_BYTES", 10485760)
+        log_backup_count_env = get_env_int("SHIELDNET_LOG_BACKUP_COUNT", 5)
+
+        if log_file_env:
+            log_dir = os.path.dirname(log_file_env)
+            if log_dir and not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+
+        logging_config_dict = {
+            "log_level": cli_log_level_override if cli_log_level_override else log_level_env,
+            "log_file": log_file_env,
+            "log_rotation_bytes": log_rotation_bytes_env,
+            "log_backup_count": log_backup_count_env
+        }
+        setup_logging(logging_config_dict)
+
+        # Extract essential config values for SSLContext setup from environment
+        server_cert_path = resolve_env_path(ENV_BASE_DIR, get_env_str("SHIELDNET_TLS_SERVER_CERT", required=True))
+        server_key_path = resolve_env_path(ENV_BASE_DIR, get_env_str("SHIELDNET_TLS_SERVER_KEY", required=True))
+        client_ca_cert_path_env = resolve_env_path(ENV_BASE_DIR, get_env_str("SHIELDNET_TLS_CLIENT_CA_CERT")) # Optional for mTLS
+        min_tls_version_str = get_env_str("SHIELDNET_TLS_MIN_VERSION", "TLSv1.2")
+        # allowed_client_cns are handled inside handle_client_connection
+
+        if not server_cert_path or not server_key_path:
+            logging.error("FATAL: Server certificate or key path not configured.")
+            sys.exit(1)
+
+    except EnvConfigError as e:
+        logging.error(f"FATAL: Configuration error from environment: {e}")
         sys.exit(1)
     except Exception as e:
-        logging.error(f"FATAL: Failed to load or validate configuration: {e}", exc_info=True)
+        logging.error(f"FATAL: Failed to initialize configuration or logging: {e}", exc_info=True)
         sys.exit(1)
-
-    # Extract essential config values for SSLContext setup
-    server_cert_path = get_config_value(config, "tls.server_cert", required=True)
-    server_key_path = get_config_value(config, "tls.server_key", required=True)
-    client_ca_cert_path = get_config_value(config, "tls.client_ca_cert")
-    min_tls_version_str = get_config_value(config, "tls.min_version_str", "TLSv1.2")
-    # allowed_client_cns = get_config_value(config, "tls.allowed_client_cns", []) # For CN validation later
 
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.options |= ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
@@ -259,10 +344,10 @@ def main():
         context.load_cert_chain(certfile=server_cert_path, keyfile=server_key_path)
         logging.info(f"Successfully loaded server certificate {server_cert_path} and key {server_key_path}")
 
-        if client_ca_cert_path: # This enables mTLS
-            context.load_verify_locations(cafile=client_ca_cert_path)
+        if client_ca_cert_path_env: # This enables mTLS
+            context.load_verify_locations(cafile=client_ca_cert_path_env)
             context.verify_mode = ssl.CERT_REQUIRED # Require client certificate and verify it
-            logging.info(f"mTLS enabled: Loaded client CA {client_ca_cert_path}. Client certificates will be required and verified.")
+            logging.info(f"mTLS enabled: Loaded client CA {client_ca_cert_path_env}. Client certificates will be required and verified.")
         else:
             # Standard TLS: Server authenticates to client, client does not authenticate to server with a cert.
             context.verify_mode = ssl.CERT_NONE # Explicitly state no client cert required by server context
@@ -278,13 +363,17 @@ def main():
         logging.error(f"An unexpected error occurred setting up SSL context: {e}", exc_info=True)
         sys.exit(1)
 
-    listen_host = get_config_value(config, "server_listener.host", "0.0.0.0")
-    listen_port = get_config_value(config, "server_listener.port", required=True)
-    if listen_port is None: # Should be caught by required=True
-        logging.error("FATAL: server_listener.port is not defined in the configuration.")
+    listen_host = get_env_str("SHIELDNET_SERVER_LISTENER_HOST", "0.0.0.0")
+    listen_port = get_env_int("SHIELDNET_SERVER_LISTENER_PORT", required=True)
+
+    # The old target_service host/port from YAML are no longer relevant for primary logic.
+    # They are commented out in the .env.example. If someone sets them, they are ignored here.
+
+    if listen_port is None: # Should be caught by required=True from get_env_int
+        logging.error("FATAL: SHIELDNET_SERVER_LISTENER_PORT is not defined in the configuration.")
         sys.exit(1)
 
-    tls_handshake_timeout = get_config_value(config, "timeouts.tls_handshake", 15) # Get from config
+    tls_handshake_timeout = get_env_int("SHIELDNET_TIMEOUT_TLS_HANDSHAKE", 15)
 
     server_socket = None
     try:
@@ -293,7 +382,7 @@ def main():
         server_socket.bind((listen_host, listen_port))
         server_socket.listen(5) # Configurable backlog?
         logging.info(f"Server listening on {listen_host}:{listen_port} for TLS connections...")
-        logging.info(f"Forwarding decrypted traffic to {get_config_value(config, 'target_service.host')}:{get_config_value(config, 'target_service.port')}")
+        logging.info("Server will dynamically forward traffic based on client requests.")
 
         active_threads = []
         while True:
@@ -315,14 +404,11 @@ def main():
 
                     # After successful handshake, clear handshake timeout.
                     # Data timeouts will be handled by forward_data or connection handler later.
-                    tls_client_socket.settimeout(None)
-
-                    # logging.info(f"TLS handshake successful with {client_address}.") # Moved to handle_client_connection
-                    # Client cert CN/SAN validation is now inside handle_client_connection
+                    tls_client_socket.settimeout(None) # Reset timeout before passing to handler
 
                     thread = threading.Thread(
-                        target=handle_client_connection, # CN/SAN check is now inside this function
-                        args=(tls_client_socket, config), # Pass the whole config
+                        target=handle_client_connection,
+                        args=(tls_client_socket,), # No app_config dict needed anymore
                         daemon=True,
                         name=f"Handler-{client_address}"
                     )
@@ -332,12 +418,12 @@ def main():
                 except ssl.SSLError as e:
                     logging.error(f"TLS handshake failed with {client_address}: {e}")
                     if tls_client_socket: tls_client_socket.close()
-                    elif plain_client_socket: plain_client_socket.close() # Close the original socket if wrap failed
-                except socket.timeout as e: # Catch handshake timeout specifically
+                    elif plain_client_socket: plain_client_socket.close()
+                except socket.timeout as e:
                     logging.error(f"TLS handshake timed out with {client_address}: {e}")
                     if tls_client_socket: tls_client_socket.close()
                     elif plain_client_socket: plain_client_socket.close()
-                except Exception as e: # Catch other errors during/after handshake
+                except Exception as e:
                     logging.error(f"Error during or after TLS handshake with {client_address}: {e}", exc_info=True)
                     if tls_client_socket: tls_client_socket.close()
                     elif plain_client_socket: plain_client_socket.close()
