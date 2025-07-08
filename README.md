@@ -199,20 +199,26 @@ Le client est exécuté localement et se connecte au serveur (qui peut être le 
 4.  Créez le dossier de logs du client si vous spécifiez un fichier de log dans la configuration : `mkdir -p logs/client`.
 
     **Démarrer le client :**
-    Le client s'exécute dans un mode spécifié (`tcp-tunnel` ou `socks5-proxy`) et prend le chemin vers son fichier de configuration YAML.
+    Le client s'exécute dans un mode spécifié (`tcp-tunnel` ou `socks5-proxy`).
+    Par défaut, il recherche un fichier de configuration nommé `client_config.yaml` dans le dossier `client/config/`.
+    Vous pouvez spécifier un autre chemin de configuration avec l'option `--config`.
     ```bash
-    # Exécuter en mode TCP Tunnel (les tunnels sont définis dans client_config.yaml)
-    python client/client.py tcp-tunnel --config client_config.yaml
+    # Exécuter en mode TCP Tunnel avec la configuration par défaut (client/config/client_config.yaml)
+    python client/client.py tcp-tunnel
 
-    # Exécuter en mode SOCKS5 Proxy (le port d'écoute SOCKS5 est défini dans client_config.yaml)
-    python client/client.py socks5-proxy --config client_config.yaml
+    # Exécuter en mode SOCKS5 Proxy avec la configuration par défaut
+    python client/client.py socks5-proxy
+
+    # Spécifier un fichier de configuration personnalisé
+    python client/client.py tcp-tunnel --config chemin/vers/votre_config.yaml
 
     # Pour surcharger le niveau de log (ex: DEBUG)
-    python client/client.py tcp-tunnel --config client_config.yaml --log-level DEBUG
+    python client/client.py tcp-tunnel --log-level DEBUG
+    # (ceci utilisera la configuration par défaut si --config n'est pas spécifié)
     ```
 
 5.  **Tester le mode `tcp-tunnel` :**
-    Si vous avez configuré un tunnel dans `client_config.yaml` pour écouter, par exemple, sur `127.0.0.1:1080` et cibler `localhost:8080` (où un service écoute), vous pouvez tester avec :
+    Si vous avez configuré un tunnel dans `client/config/client_config.yaml` (ou votre fichier personnalisé) pour écouter, par exemple, sur `127.0.0.1:1080` et cibler `localhost:8080` (où un service écoute), vous pouvez tester avec :
     ```bash
     curl http://127.0.0.1:1080
     # ou nc 127.0.0.1 1080, etc.
