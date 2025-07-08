@@ -10,12 +10,12 @@ import os # For path operations
 # Use the new .env config loader
 # Assuming common utilities are accessible similarly to how client accesses them.
 # If server has its own common dir, this path might need adjustment or mirroring the loader.
-from client.common.env_config_loader import (
+from common.env_config_loader import (
     load_env_config, get_env_str, get_env_int, get_env_bool,
     get_env_list_str, resolve_env_path, EnvConfigError
 )
-from client.common.logging_setup import setup_logging # Assuming shared logging setup
-from client.common.network_utils import forward_data   # Assuming shared network utils
+from common.logging_setup import setup_logging # Assuming shared logging setup
+from common.network_utils import forward_data   # Assuming shared network utils
 
 
 # Initial basic logging to catch early errors (e.g., config loading)
