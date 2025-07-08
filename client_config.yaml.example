@@ -1,0 +1,94 @@
+# ShieldNet Client Configuration (YAML Example)
+#
+# This file defines the configuration for the ShieldNet client,
+# covering common settings, TCP tunnel mode, and SOCKS5 proxy mode.
+
+# Common settings applicable to both modes (tcp-tunnel and socks5-proxy)
+common_settings:
+  # Remote ShieldNet Server Connection Details
+  remote_server_host: "localhost"    # Hostname or IP of the ShieldNet server (Required)
+  remote_server_port: 8443           # Port of the ShieldNet server (Required)
+
+  # TLS Configuration
+  # Path to CA certificate to verify the server. Essential if server uses self-signed/private certs.
+  # Paths can be absolute or relative to the location of this config file, or the client's CWD.
+  # (The client will need logic to resolve relative paths, typically relative to client.py or CWD)
+  server_ca_cert: "certs/ca.crt"
+  # Client certificate and key for mTLS (if server requires it)
+  client_cert: "certs/client.crt"    # Optional, for mTLS
+  client_key: "certs/client.key"     # Optional, for mTLS
+  # Minimum TLS version to use. Options: "TLSv1.2", "TLSv1.3"
+  tls_min_version: "TLSv1.2"
+  # Optional: Specify server's expected Common Name (CN) for TLS verification.
+  # If empty or not provided, remote_server_host is used for SNI and CN check.
+  # tls_expected_server_cn: ""
+
+  # Timeout Settings (in seconds)
+  connect_timeout: 10                # Timeout for TCP connection to ShieldNet server
+  tls_handshake_timeout: 15          # Timeout for TLS handshake with ShieldNet server
+  socket_data_timeout: 60            # Timeout for data send/recv operations on established sockets
+  reconnect_delay_base: 5            # Base delay for reconnection attempts (exponential backoff)
+  reconnect_max_retries: 3           # Max number of reconnection attempts (0 for no retries beyond initial)
+
+  # Logging Configuration
+  logging:
+    log_level: "INFO"                # Default log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    log_file: "logs/client/client.log" # Path to log file. If null or empty, logs to console only.
+                                     # Relative paths typically resolved based on client execution directory.
+    log_rotation_bytes: 10485760     # Max log file size in bytes (e.g., 10MB). 0 to disable rotation.
+    log_backup_count: 5              # Number of backup log files to keep. 0 to disable rotation.
+    log_color: true                  # Enable/disable colored logging for console (if supported).
+    # Example formats (optional, defaults are used if not specified):
+    # log_format_console: "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+    # log_format_file: "%(asctime)s - %(levelname)s - %(threadName)s - %(filename)s:%(lineno)d - %(message)s"
+
+# Configuration specific to 'tcp-tunnel' mode
+tcp_tunnel_mode:
+  # List of tunnels to establish. Each tunnel forwards a local port to a target host/port via the ShieldNet server.
+  # The client will listen on each `local_port` specified here.
+  tunnels:
+    - local_listen_host: "127.0.0.1" # Host for the client to listen on for this tunnel
+      local_listen_port: 1080        # Local port to listen on
+      target_service_host: "localhost" # Target host the ShieldNet server should forward traffic to
+      target_service_port: 8080        # Target port on the target_service_host
+
+    - local_listen_host: "127.0.0.1"
+      local_listen_port: 1081
+      target_service_host: "another.internal.service"
+      target_service_port: 9000
+
+    # Example: Tunnel to a public service (server forwards to example.com)
+    # - local_listen_host: "127.0.0.1"
+    #   local_listen_port: 1082
+    #   target_service_host: "example.com"
+    #   target_service_port: 80
+
+
+# Configuration specific to 'socks5-proxy' mode
+socks5_proxy_mode:
+  local_listen_host: "127.0.0.1"     # Local host for the SOCKS5 proxy to listen on
+  local_listen_port: 1090            # Local port for the SOCKS5 proxy
+  # Optional: Username for SOCKS5 authentication
+  # username: "user"
+  # Optional: Password for SOCKS5 authentication
+  # password: "pass"
+  # Note: The actual SOCKS5 library chosen will determine how auth is handled.
+  # The remote ShieldNet server connection for SOCKS5 will use 'common_settings'.
+  # The target host/port for SOCKS5 connections are determined dynamically by the SOCKS client.
+
+# Base directory for resolving relative paths in this config (e.g., certs, logs).
+# If not specified, paths might be resolved relative to the config file's location or CWD.
+# It's often good practice for the application to define how this is handled.
+# For this example, we assume paths like "certs/ca.crt" are relative to the project root
+# or a directory specified by an environment variable like ENV_BASE_DIR if needed.
+# config_base_dir: "." # Example: current directory of the config file
+# config_base_dir: "/app/config" # Example: an absolute path if running in a container
+# If using relative paths for certs/logs, ensure the client script can find them.
+# One common strategy is to resolve them relative to the main client.py script's directory,
+# or relative to the current working directory.
+# The ENV_BASE_DIR mechanism in the current client.py (based on client.py's location)
+# is a good approach for resolving paths like certs/ and logs/.
+# This YAML file's paths will be interpreted using a similar logic.
+# For example, `server_ca_cert: "certs/ca.crt"` would be `ENV_BASE_DIR/certs/ca.crt`.
+# If `log_file: "logs/client/client.log"` is specified, it would become `ENV_BASE_DIR/logs/client/client.log`.
+# If an absolute path is given (e.g. `/var/log/client.log`), it's used as is.

@@ -115,35 +115,32 @@ Si vous préférez générer les certificats manuellement avec OpenSSL, vous pou
 
 ### 3. Configuration
 
-La configuration du client et du serveur se fait désormais via des fichiers `.env`. Des fichiers d'exemple (`.env.example`) sont fournis dans `client/config/` et `server/config/`.
+*   **Client :** La configuration du client se fait via un fichier YAML. Copiez `client_config.yaml.example` (situé à la racine du projet ou dans `client/`) vers `client_config.yaml` (ou un autre nom de votre choix) et personnalisez les valeurs. Ce fichier permet de définir les paramètres communs (serveur distant, TLS, logging), les tunnels pour le mode `tcp-tunnel`, et les réglages du proxy pour le mode `socks5-proxy`.
 
-1.  **Pour le client :** Copiez `client/config/.env.example` vers `client/config/.env` et personnalisez les valeurs.
-2.  **Pour le serveur :** Copiez `server/config/.env.example` vers `server/config/.env` et personnalisez les valeurs.
+*   **Serveur :** La configuration du serveur continue d'utiliser un fichier `.env`. Copiez `server/config/.env.example` vers `server/config/.env` et personnalisez les valeurs.
 
 ```bash
-mkdir -p client/config server/config logs/client logs/server # Créez les dossiers nécessaires
+# Créez les dossiers nécessaires s'ils n'existent pas
+mkdir -p certs logs/client logs/server server/config
 
-# Pour le client
-cp client/config/.env.example client/config/.env
-# Éditez client/config/.env
+# Pour le client (exemple, placez client_config.yaml où vous le souhaitez)
+cp client_config.yaml.example client_config.yaml
+# Éditez client_config.yaml
 
 # Pour le serveur
 cp server/config/.env.example server/config/.env
 # Éditez server/config/.env
 ```
 
-**Variables d'environnement clés (voir les fichiers `.env.example` pour la liste complète) :**
+**Fichiers de configuration clés :**
 
-*   **Client (`client/config/.env`) :**
-    *   `SHIELDNET_LOCAL_LISTENER_PORT`: Port d'écoute local du client (ex: `1080`).
-    *   `SHIELDNET_REMOTE_SERVER_HOST`: Hôte du serveur ShieldNet (ex: `localhost`).
-    *   `SHIELDNET_REMOTE_SERVER_PORT`: Port du serveur ShieldNet (ex: `8443`).
-    *   `SHIELDNET_REMOTE_SERVER_CA_CERT`: Chemin vers `ca.crt` (ex: `certs/ca.crt`).
-    *   `SHIELDNET_TLS_CLIENT_CERT`, `SHIELDNET_TLS_CLIENT_KEY`: Pour mTLS.
-    *   `SHIELDNET_LOG_FILE`, `SHIELDNET_LOG_LEVEL`, etc. pour la journalisation.
-    *   Divers `SHIELDNET_TIMEOUT_*` pour les timeouts.
+*   **Client (`client_config.yaml`) :**
+    *   `common_settings`: Adresse du serveur distant, certificats TLS, timeouts, configuration du logging.
+    *   `tcp_tunnel_mode`: Liste des tunnels à établir (port d'écoute local, hôte cible, port cible).
+    *   `socks5_proxy_mode`: Port d'écoute local pour le serveur SOCKS5.
+    *   Consultez `client_config.yaml.example` pour tous les détails et options.
 
-*   **Serveur (`server/config/.env`) :**
+*   **Serveur (`server/config/.env`) :** (inchangé par cette refonte du client)
     *   `SHIELDNET_SERVER_LISTENER_HOST`: Hôte d'écoute du serveur (ex: `0.0.0.0`).
     *   `SHIELDNET_SERVER_LISTENER_PORT`: Port d'écoute du serveur (ex: `8443`).
     *   `SHIELDNET_TLS_SERVER_CERT`, `SHIELDNET_TLS_SERVER_KEY`: Certificat et clé du serveur.
@@ -152,24 +149,30 @@ cp server/config/.env.example server/config/.env
     *   `SHIELDNET_TIMEOUT_TARGET_CONNECT`: Timeout pour la connexion à la cible dynamique.
     *   `SHIELDNET_LOG_FILE`, `SHIELDNET_LOG_LEVEL`, etc.
 
-**Important pour les chemins (certificats, logs) :**
-*   Lors de l'exécution locale, les chemins relatifs dans les fichiers `.env` (par exemple `certs/ca.crt`) sont généralement résolus par rapport au répertoire racine du projet (où se trouvent `client.py` et `server.py` ou leurs dossiers respectifs).
-*   Pour Docker (serveur), les chemins spécifiés dans `server/config/.env` (comme `certs/server.crt`) seront résolus à l'intérieur du conteneur. Étant donné que `ENV_BASE_DIR` dans `server.py` est `/app` et que les volumes sont montés dans `/app` (par exemple, `./certs` est monté sur `/app/certs`), un chemin comme `certs/server.crt` dans le `.env` sera correctement trouvé à `/app/certs/server.crt`.
+**Important pour les chemins dans les configurations :**
+*   **Client (`client_config.yaml`):** Les chemins relatifs pour les certificats (`server_ca_cert`, `client_cert`, `client_key`) et le fichier de log (`log_file`) sont résolus par rapport au répertoire racine du projet (le répertoire contenant le dossier `client/` et `certs/`). Par exemple, `certs/ca.crt` est attendu comme `PROJECT_ROOT/certs/ca.crt`. Les chemins absolus sont utilisés tels quels.
+*   **Serveur (`server/config/.env`):** Pour Docker, les chemins spécifiés (comme `certs/server.crt`) sont résolus à l'intérieur du conteneur. Le `ENV_BASE_DIR` dans `server.py` est `/app`, et les volumes sont montés en conséquence (ex: `./certs` local est monté sur `/app/certs` dans le conteneur).
 
-### 4. Architecture de Routage Dynamique
+### 4. Modes de Fonctionnement du Client
 
-Avec le routage dynamique, le flux de données est le suivant :
-1.  Une application locale se connecte au port d'écoute du **Client ShieldNet** (`local_listener.host`:`local_listener.port` dans `client_config.yaml`).
-2.  Le **Client ShieldNet** est lancé avec des arguments `--target-host <host>` et `--target-port <port>` qui spécifient la destination finale.
-3.  Le Client établit une connexion TLS avec le **Serveur ShieldNet**.
-4.  Immédiatement après la poignée de main TLS, le Client envoie la chaîne `<host>:<port>\n` au Serveur.
-5.  Le **Serveur ShieldNet** lit cette chaîne, se connecte à `<host>:<port>`, puis relaie les données de manière bidirectionnelle entre le Client (via le tunnel TLS) et la destination finale.
+Le client `client.py` supporte désormais deux modes principaux :
 
-Cela signifie que la section `target_service` dans `server_config.yaml` n'est plus utilisée pour déterminer où le trafic est acheminé.
+*   **`tcp-tunnel`**:
+    *   Ce mode permet de configurer plusieurs tunnels TCP. Chaque tunnel écoute sur un port local spécifié et transfère le trafic vers un service cible (`target_service_host:target_service_port`) via le serveur ShieldNet.
+    *   La configuration des tunnels (ports locaux, cibles) se fait dans la section `tcp_tunnel_mode.tunnels` du fichier `client_config.yaml`.
+    *   Le serveur ShieldNet est toujours informé dynamiquement de la destination finale pour chaque connexion tunnelisée.
+
+*   **`socks5-proxy`**:
+    *   Ce mode démarre un serveur SOCKS5 local sur un port configurable (`socks5_proxy_mode.local_listen_port` dans `client_config.yaml`).
+    *   Les applications clientes peuvent se connecter à ce proxy SOCKS5.
+    *   Pour chaque connexion SOCKS entrante, le client ShieldNet établit dynamiquement un tunnel TLS vers le serveur ShieldNet, en lui indiquant la destination demandée par le client SOCKS.
+    *   Ceci permet de naviguer sur des sites HTTP et HTTPS via le tunnel sécurisé. Aucune authentification SOCKS n'est implémentée pour le moment.
+
+Dans les deux modes, la communication avec le serveur ShieldNet utilise les paramètres TLS définis dans `common_settings` du fichier `client_config.yaml`.
 
 ### 5. Exécution de l'application
 
-**a. Déploiement du Serveur (avec Docker Compose) :**
+**a. Déploiement du Serveur (avec Docker Compose) :** (inchangé)
 
 Le `docker-compose.yml` est configuré pour ne démarrer que le service `tunnel-server`.
 1.  Générez les certificats dans `./certs/` en utilisant `python certs.py`.
@@ -191,100 +194,119 @@ docker-compose down # ou docker-compose stop tunnel-server
 
 Le client est exécuté localement et se connecte au serveur (qui peut être le serveur Docker).
 1.  Installez les dépendances : `pip install -r requirements.txt`.
-2.  Assurez-vous que les certificats sont générés (`certs/`) et que `client/config/.env` est configuré (copiez de `.env.example`) pour pointer vers le serveur (ex: `SHIELDNET_REMOTE_SERVER_HOST="localhost"`, `SHIELDNET_REMOTE_SERVER_PORT="8443"`) et les bons chemins de certificats locaux.
-3.  Créez le dossier de logs du client : `mkdir -p logs/client`.
+2.  Assurez-vous que les certificats sont générés (`certs/`).
+3.  Créez un fichier de configuration pour le client, par exemple `client_config.yaml`, en copiant et modifiant `client_config.yaml.example`. Assurez-vous que les chemins des certificats et les détails du serveur distant sont corrects.
+4.  Créez le dossier de logs du client si vous spécifiez un fichier de log dans la configuration : `mkdir -p logs/client`.
 
     **Démarrer le client :**
-    Le client nécessite des arguments pour la destination dynamique et peut prendre un chemin vers son fichier `.env`.
+    Le client s'exécute dans un mode spécifié (`tcp-tunnel` ou `socks5-proxy`) et prend le chemin vers son fichier de configuration YAML.
     ```bash
-    python client/client.py \
-      --config client/config/.env \
-      --target-host <destination_host> \
-      --target-port <destination_port>
-    # Exemple : python client/client.py --config client/config/.env --target-host localhost --target-port 8080
-    # Pour logs verbeux : ajouter --verbose
-    ```
-    *   `<destination_host>`: L'hôte final auquel le serveur doit se connecter (ex: `localhost`, `www.google.com`).
-    *   `<destination_port>`: Le port final sur `<destination_host>` (ex: `8080`, `80`).
+    # Exécuter en mode TCP Tunnel (les tunnels sont définis dans client_config.yaml)
+    python client/client.py tcp-tunnel --config client_config.yaml
 
-4.  Testez en envoyant du trafic vers le port d'écoute local du client (configuré dans `client/config/.env` via `SHIELDNET_LOCAL_LISTENER_PORT`, ex: `localhost:1080`). Ce trafic sera tunnelisé vers le serveur, qui le redirigera ensuite vers `--target-host`:`--target-port`.
-    Par exemple, si le client écoute sur `localhost:1080` (défini par `SHIELDNET_LOCAL_LISTENER_PORT=1080` dans son `.env`) et est lancé avec `--target-host localhost --target-port 8000` (où un service écoute sur `localhost:8000`):
+    # Exécuter en mode SOCKS5 Proxy (le port d'écoute SOCKS5 est défini dans client_config.yaml)
+    python client/client.py socks5-proxy --config client_config.yaml
+
+    # Pour surcharger le niveau de log (ex: DEBUG)
+    python client/client.py tcp-tunnel --config client_config.yaml --log-level DEBUG
+    ```
+
+5.  **Tester le mode `tcp-tunnel` :**
+    Si vous avez configuré un tunnel dans `client_config.yaml` pour écouter, par exemple, sur `127.0.0.1:1080` et cibler `localhost:8080` (où un service écoute), vous pouvez tester avec :
     ```bash
-    curl http://localhost:1080 # ou nc localhost 1080, etc.
+    curl http://127.0.0.1:1080
+    # ou nc 127.0.0.1 1080, etc.
+    ```
+    Le trafic sera acheminé via le serveur ShieldNet vers `localhost:8080`.
+
+6.  **Tester le mode `socks5-proxy` :**
+    Si vous avez configuré le proxy SOCKS5 pour écouter, par exemple, sur `127.0.0.1:1090` dans `client_config.yaml`, vous pouvez configurer votre navigateur ou un outil comme `curl` pour l'utiliser :
+    ```bash
+    # Accéder à un site HTTP via le proxy SOCKS5
+    curl --socks5 127.0.0.1:1090 http://example.com
+
+    # Accéder à un site HTTPS via le proxy SOCKS5
+    curl --socks5 127.0.0.1:1090 https://example.com
     ```
 
 ### 6. Scénarios d'Exemple
 
-#### ✅ Scénario 1 : Test Local (ex: application web locale)
+Les exemples ci-dessous illustrent comment utiliser les nouveaux modes. Assurez-vous que votre `client_config.yaml` est correctement configuré pour les `common_settings` (serveur distant, certificats, etc.).
 
-*   **Objectif :** Accéder à un service web tournant sur `localhost:9090` via le tunnel, en faisant apparaître la connexion au service web comme venant du serveur ShieldNet (qui pourrait être sur la même machine ou une autre).
+#### ✅ Scénario 1 : Mode `tcp-tunnel` - Accès à un service web local
+
+*   **Objectif :** Accéder à un service web tournant sur `localhost:9090` via un tunnel local sur le port `1080`.
 *   **Service Cible :** Un simple serveur web Python écoutant sur `localhost:9090`.
     ```bash
-    # Dans un terminal, démarrez un serveur web simple (nécessite Python)
-    mkdir test-site && cd test-site && echo "Hello from target service" > index.html
+    # Dans un terminal, démarrez un serveur web simple
+    mkdir -p test-site && cd test-site && echo "Hello from target service" > index.html
     python -m http.server 9090
     cd ..
     ```
-*   **Serveur ShieldNet :** Démarrez le serveur ShieldNet (par exemple, via Docker Compose, écoutant sur `localhost:8443`).
-    ```bash
-    docker-compose up --build -d tunnel-server
+*   **Serveur ShieldNet :** Démarrez le serveur ShieldNet (ex: via Docker Compose, écoutant sur `localhost:8443`).
+*   **Configuration Client (`client_config.yaml`) (extrait pertinent) :**
+    ```yaml
+    # ... common_settings ...
+    tcp_tunnel_mode:
+      tunnels:
+        - local_listen_host: "127.0.0.1"
+          local_listen_port: 1080        # Le client écoute ici
+          target_service_host: "localhost" # Le serveur ShieldNet se connectera ici
+          target_service_port: 9090
     ```
-*   **Client ShieldNet :** Démarrez le client pour qu'il écoute localement sur (par exemple) `localhost:1080` et dise au serveur ShieldNet de se connecter à `localhost:9090`.
+*   **Client ShieldNet :**
     ```bash
-    python client/client.py \
-      --config client/config/.env \
-      --target-host localhost \
-      --target-port 9090
+    python client/client.py tcp-tunnel --config client_config.yaml
     ```
-    (Assurez-vous que `client/config/.env` contient `SHIELDNET_REMOTE_SERVER_HOST="localhost"`, `SHIELDNET_REMOTE_SERVER_PORT="8443"`, et `SHIELDNET_LOCAL_LISTENER_PORT="1080"`).
-*   **Test :** Ouvrez un navigateur ou utilisez `curl` pour accéder à `http://localhost:1080`.
+*   **Test :**
     ```bash
-    curl http://localhost:1080
+    curl http://127.0.0.1:1080
     ```
-    Vous devriez voir "Hello from target service". Le trafic est allé de `curl` -> client ShieldNet (1080) -> serveur ShieldNet (8443) -> service web Python (9090).
+    Vous devriez voir "Hello from target service".
 
-#### ✅ Scénario 2 : Routage vers un Service Externe (ex: site web public)
+#### ✅ Scénario 2 : Mode `socks5-proxy` - Navigation Web via le Tunnel
 
-*   **Objectif :** Accéder à `example.com:80` via le tunnel, de sorte que la requête à `example.com` semble provenir de l'IP du serveur ShieldNet.
-*   **Service Cible :** `example.com` sur le port `80`.
-*   **Serveur ShieldNet :** Démarrez le serveur ShieldNet (peut être sur une machine distante avec une IP publique, ou localement via Docker pour ce test). Il écoute sur son port public (ex: `YOUR_SERVER_IP:8443`).
-    ```bash
-    # Sur la machine du serveur (ou localement avec Docker)
-    docker-compose up --build -d tunnel-server
+*   **Objectif :** Naviguer sur `http://example.com` et `https://example.com` en utilisant le client ShieldNet comme proxy SOCKS5, écoutant localement sur le port `1090`.
+*   **Serveur ShieldNet :** Démarrez le serveur ShieldNet.
+*   **Configuration Client (`client_config.yaml`) (extrait pertinent) :**
+    ```yaml
+    # ... common_settings ...
+    socks5_proxy_mode:
+      local_listen_host: "127.0.0.1"
+      local_listen_port: 1090 # Le client écoute ici pour les connexions SOCKS
     ```
-*   **Client ShieldNet :** Sur votre machine locale, démarrez le client pour qu'il écoute sur `localhost:1081` et dise au serveur ShieldNet de se connecter à `example.com:80`.
+*   **Client ShieldNet :**
     ```bash
-    python client/client.py \
-      --config client/config/.env \
-      --target-host example.com \
-      --target-port 80
+    python client/client.py socks5-proxy --config client_config.yaml
     ```
-    (Modifiez `client/config/.env` pour que `SHIELDNET_REMOTE_SERVER_HOST` pointe vers l'IP/hostname de votre serveur ShieldNet, `SHIELDNET_REMOTE_SERVER_PORT` vers son port d'écoute, et `SHIELDNET_LOCAL_LISTENER_PORT` est `1081` pour cet exemple).
-*   **Test :** Accédez à `http://localhost:1081` avec `curl`.
+*   **Test :**
     ```bash
-    curl -v http://localhost:1081
+    curl --socks5 127.0.0.1:1090 http://example.com
+    curl --socks5 127.0.0.1:1090 https://example.com
     ```
-    Vous devriez recevoir la page d'accueil de `example.com`. Le serveur ShieldNet a effectué la requête à `example.com` pour vous.
+    Vous devriez recevoir les pages d'accueil correspondantes. Le trafic vers `example.com` transite par le serveur ShieldNet.
 
-### 7. Lancer les tests unitaires
+### 7. Lancer les tests unitaires (Besoin de mise à jour)
 
 Placez-vous à la racine du projet.
 ```bash
 python -m unittest discover -s tests -v
 ```
 Cela détectera et exécutera tous les tests du dossier `tests`.
+**Note :** Les tests unitaires existants (`tests/test_client.py`, etc.) nécessiteront une mise à jour significative pour refléter la nouvelle structure du client (modes, configuration YAML) et pour mocker correctement les nouvelles fonctionnalités.
 
 ### 8. Script de test end-to-end (`scripts/test_tunnel.sh`)
 
-Le script `scripts/test_tunnel.sh` existant utilise `docker-compose` pour démarrer le client, le serveur et un `echo-server`. Avec les modifications pour un déploiement serveur uniquement via `docker-compose`, ce script nécessitera des ajustements importants (par exemple, exécuter le client localement). **Ce script n'est pas mis à jour dans le cadre de cette refactorisation initiale axée sur le routage dynamique et le déploiement Docker du serveur uniquement.**
+Le script `scripts/test_tunnel.sh` existant n'est plus compatible avec la nouvelle structure du client et nécessiterait une refonte complète.
 
 ## Développement
 
 *   **Style de code** : Suivre PEP 8. Utilisez un linter comme Flake8. Les annotations de type sont utilisées.
-*   **Journalisation** : Utilise le module `logging` standard. Voir `client/common/logging_setup.py`.
-*   **Configuration** : Via fichiers `.env` et `client/common/env_config_loader.py`.
-*   **TLS** : Paramètres TLS 1.2 minimum, mTLS optionnel (basé sur la configuration serveur via variables d'environnement).
-*   **Tests** : Des tests unitaires sont présents dans `tests/` (auront besoin d'adaptation pour la configuration `.env`).
+*   **Journalisation** : Utilise le module `logging` standard, amélioré avec `coloredlogs` pour la console. Configurable via `client_config.yaml`. Voir `client/common/logging_setup.py`.
+*   **Configuration Client** : Via fichier YAML (par défaut `client_config.yaml`). Voir `client_config.yaml.example`.
+*   **Configuration Serveur** : Via fichier `server/config/.env`.
+*   **TLS** : Paramètres TLS 1.2 minimum (configurable), mTLS optionnel.
+*   **Tests** : Les tests unitaires existants dans `tests/` nécessitent une adaptation.
 
 ## Licence
 

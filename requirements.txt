@@ -1,3 +1,4 @@
 PyYAML>=5.0
 cryptography
 python-dotenv>=0.15.0 # For .env file support
+coloredlogs>=10.0 # For colored console logging
