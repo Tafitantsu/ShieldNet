@@ -14,8 +14,9 @@ from common.env_config_loader import (
     load_env_config, get_env_str, get_env_int, get_env_bool,
     resolve_env_path, EnvConfigError
 )
-from common.logging_setup import setup_logging
+from common.logging_setup import setup_logging, DEFAULT_LOG_FORMAT
 from common.network_utils import forward_data # Import the new forward_data
+from typing import Optional, Dict, Any # Added Optional, Dict, Any
 
 # Initial basic logging to catch early errors (e.g., config loading or argparse)
 # This will be properly replaced by setup_logging() once YAML config is loaded.
@@ -336,8 +337,8 @@ def main():
     parser.add_argument(
         '--config',
         type=str,
-        default='client_config.yaml', # Defaulting to a YAML file in current dir or specified path
-        help="Path to the client YAML configuration file (default: client_config.yaml)."
+        default='client/config/client_config.yaml', # Defaulting to a YAML file in client/config/
+        help="Path to the client YAML configuration file (default: client/config/client_config.yaml)."
     )
     parser.add_argument(
         '--log-level',
@@ -408,71 +409,15 @@ def main():
         sys.exit(1)
 
 
-def run_tcp_tunnel_mode(args):
-    # Placeholder for TCP tunnel mode logic
+def run_tcp_tunnel_mode(args: argparse.Namespace, config: Dict[str, Any]):
+    """
+    Runs the client in TCP tunnel mode.
+    Sets up listeners for multiple tunnels as defined in the configuration.
+    """
     logging.info("TCP Tunnel mode selected.")
-    # TODO:
-    # 1. Load YAML config (args.config)
-    # 2. Extract common settings (remote server, TLS, etc.)
-    # 3. Extract tcp-tunnel specific settings (list of tunnels)
-    # 4. For each tunnel definition:
-    #    - Get local_port, target_host, target_port
-    #    - Start a listener on local_port
-    #    - When a connection comes in, call a modified handle_local_connection
-    #      (passing target_host, target_port for that specific tunnel)
-    # This will replace the old main() loop.
-    # Need to integrate the existing handle_local_connection logic here,
-    # making it capable of handling different targets per tunnel.
 
-    # --- TEMPORARY: Replicate parts of old main for basic structure ---
-    # This is just to keep things minimally runnable and will be replaced by proper config loading.
-
-    # --- Logging Setup (Temporary, using .env values) ---
-    # This will be replaced by YAML config loading later.
-    # For now, we construct a logging_config dict similar to what YAML would provide.
-
-    # Attempt to load .env for fallback/temporary values
-    env_file_path = "client/config/.env" # This path would ideally come from args.config if it were an .env file
-                                         # But since args.config is for YAML, we hardcode for this temp section.
-    # We call load_env_config but don't strictly rely on its return for this temporary setup,
-    # as get_env_str etc. can pull from actual env vars if file fails.
-    load_env_config(env_file_path)
-    logging.info(f"Attempted to load legacy .env from {env_file_path} for temporary logging config.")
-
-    # Prepare logging configuration dictionary
-    # Default values are set if .env or environment variables are not found.
-    log_level_from_env = get_env_str("SHIELDNET_LOG_LEVEL", "INFO")
-    log_file_from_env = get_env_str("SHIELDNET_LOG_FILE", "logs/client/client.log") # Default if not in .env
-
-    # Resolve path for log_file if it's relative
-    # This assumes ENV_BASE_DIR is defined, which it is globally in this file.
-    # If SHIELDNET_LOG_FILE is an empty string from .env, resolve_env_path should handle it gracefully (e.g. return None or empty)
-    # or we ensure it has a default that makes sense.
-    resolved_log_file = None
-    if log_file_from_env: # Only resolve if a path is actually given
-        resolved_log_file = resolve_env_path(ENV_BASE_DIR, log_file_from_env)
-
-    logging_config_dict = {
-        "log_level": log_level_from_env,
-        "log_file": resolved_log_file, # Use the resolved path
-        "log_rotation_bytes": get_env_int("SHIELDNET_LOG_ROTATION_BYTES", 10485760), # 10MB default
-        "log_backup_count": get_env_int("SHIELDNET_LOG_BACKUP_COUNT", 5),           # 5 backups default
-        "log_format_console": get_env_str("SHIELDNET_LOG_FORMAT_CONSOLE", "%(asctime)s %(levelname)-8s %(name)s: %(message)s"),
-        "log_format_file": get_env_str("SHIELDNET_LOG_FORMAT_FILE", DEFAULT_LOG_FORMAT), # Using DEFAULT_LOG_FORMAT from logging_setup
-        "log_color": get_env_bool("SHIELDNET_LOG_COLOR", True) # Default to True if not specified
-    }
-
-    # Setup logging using the constructed config and potential CLI override
-    # The args.log_level (from CLI) takes precedence.
-    setup_logging(logging_config_dict, cli_log_level_override=args.log_level)
-
-    logging.info(f"Legacy .env values (if found) used for this temporary logging setup for TCP mode.")
-    logging.debug(f"Logging config used: {logging_config_dict}")
-    if args.log_level:
-        logging.info(f"Log level overridden by CLI: {args.log_level}")
-
-
-    logging.info("TCP Tunnel mode selected.")
+    # Logging is already set up in main() before this function is called.
+    # common_settings and tunnel definitions are taken from the 'config' dict.
 
     common_settings = config.get('common_settings', {})
     tcp_tunnel_config = config.get('tcp_tunnel_mode', {})
@@ -601,9 +546,16 @@ def run_tcp_tunnel_mode(args):
     logging.info("ShieldNet Client TCP Tunnel Mode has finished.")
 
 
-def run_socks5_proxy_mode(args):
-    # Placeholder for SOCKS5 proxy mode logic
+def run_socks5_proxy_mode(args: argparse.Namespace, config: Dict[str, Any]):
+    """
+    Runs the client in SOCKS5 proxy mode.
+    Sets up a SOCKS5 listener that forwards connections through the ShieldNet tunnel.
+    """
     logging.info("SOCKS5 Proxy mode selected.")
+
+    # Logging is already set up in main() before this function is called.
+    # common_settings and SOCKS5 settings are taken from the 'config' dict.
+
     common_settings = config.get('common_settings', {})
     socks_config = config.get('socks5_proxy_mode', {})
 
