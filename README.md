@@ -1,5 +1,5 @@
 # Tunnel TCP Sécurisé (Refactorisé)
-
+NB: lisez bien les instructions
 Ce projet fournit un tunnel TCP robuste et prêt pour la production, chiffré en TLS. Il s'agit d'une version refactorisée et améliorée d'un tunnel initial plus simple, conçue pour la sécurité, la résilience et la facilité de gestion. Le client écoute localement les connexions TCP et transfère le trafic via un lien TLS chiffré vers le serveur. Le serveur déchiffre ensuite ce trafic et le redirige vers un service TCP cible prédéfini.
 
 ## Vue d'ensemble de l'architecture
